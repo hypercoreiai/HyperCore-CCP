@@ -1,0 +1,92 @@
+# ---------------------------------------------------------------- raw inference lane
+# POST /infer/stream is the raw-token route: it speaks the frame protocol directly and
+# streams the frames out. The API routes build OpenAI/Anthropic-shaped bodies from the
+# same generator; this one is the wire, for embedders and for the load tests.
+
+STREAM_STALL_S = 30.0
+
+
+def process_active_stream_loop(
+    sync_queue: queue.Queue,
+    handler_instance: BaseHTTPRequestHandler,
+    request_uid: int,
+    supervisor_instance: HyperCoreProcessSupervisor,
+    stall_s: float = STREAM_STALL_S,
+) -> str:
+    """Consume one request's frames and write them as SSE.
+
+    Every frame the listener delivers is (msg_type, token_id, payload). The ack carries
+    the status code in the payload, a token frame carries the prompt-reuse count there,
+    and the terminal frame carries the decoded summary. Reading any of the three from the
+    wrong slot is the bug this loop is written against, which is why it takes the tuple
+    whole instead of guessing at it.
+
+    Returns "complete", "rejected", "busy", "stalled", "worker_lost" or "client_gone"
+    so the caller can account for the request without scraping the log line.
+    """
+    def emit(obj: dict) -> bool:
+        try:
+            handler_instance.wfile.write(b"data: " + json.dumps(obj).encode() + b"\n\n")
+            handler_instance.wfile.flush()
+            return True
+        except (ConnectionResetError, BrokenPipeError):
+            return False
+
+    while True:
+        try:
+            msg_type, token_id, payload = sync_queue.get(timeout=stall_s)
+        except queue.Empty:
+            logger.error("[MONITOR] request_id=%d status=stall no frame in %gs; cancelling",
+                        request_uid, stall_s)
+            supervisor_instance.send_ipc_message(CMD_CANCEL, request_uid)
+            emit({"done": True, "error": "stream stalled", "stop_reason": "cancelled"})
+            return "stalled"
+
+        if msg_type is None:
+            logger.error("worker link closed during request %d: %s", request_uid, payload)
+            emit({"done": True, "error": "worker lost"})
+            return "worker_lost"
+
+        if msg_type == RESP_STATUS:
+            status = decode_status(payload)
+            if status == 0:
+                continue
+            if status == -2:
+                logger.warning("worker refused request %d: every batch slot is in use", request_uid)
+                emit({"done": True, "error": "HYPERCORE_STATUS_BUSY"})
+                return "busy"
+            logger.error("inbound configuration rejected for request %d: code %d",
+                        request_uid, status)
+            emit({"done": True, "error": f"HYPERCORE_STATUS_INVALID_ARG: code {status}"})
+            return "rejected"
+
+        if msg_type == STREAM_TOKEN:
+            # The reuse count rides in the payload slot. Counting the frame keeps the
+            # watchdog from reading a quiet link while a request is running.
+            supervisor_instance.note_frame()
+            if token_id >= 0:
+                reused = payload if isinstance(payload, int) else 0
+                if not emit({"token_id": token_id, "prompt_reused": reused}):
+                    supervisor_instance.send_ipc_message(CMD_CANCEL, request_uid)
+                    return "client_gone"
+            continue
+
+        if msg_type == STREAM_TERMINAL:
+            summary = payload if isinstance(payload, dict) else {}
+            supervisor_instance.note_frame(summary)
+            if not emit({"done": True,
+                        "prompt_reused": int(summary.get("prompt_reused") or 0),
+                        "metrics": summary}):
+                return "client_gone"
+            logger.info(
+                "[MONITOR] request_id=%d status=success prompt_ms=%s decode_ms=%s "
+                "tokens=%s ttft_ms=%s queue_hold_ms=%s stop_reason=%s",
+                request_uid,
+                summary.get("prefill_ms"),
+                summary.get("decode_ms"),
+                summary.get("produced_tokens"),
+                summary.get("ttft_ms"),
+                derive_monitor_field("queue_hold_ms", summary),
+                summary.get("stop_reason"),
+            )
+            return "complete"

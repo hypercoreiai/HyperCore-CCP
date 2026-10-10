@@ -1,0 +1,65 @@
+cosmos-transfer2.5-2b Model by NVIDIA | NVIDIA NIM
+Skip to main content
+Search
+⌘K
+Ctrl+K
+Login
+NVIDIA
+cosmos-transfer2.5-2b
+Free Endpoint
+Generates physics-aware video world states for physical AI development using text prompts and multiple spatial control inputs derived from real-world data or simulation.
+Autonomous Vehicles
+Physical AI
+robotics
+Synthetic Data Generation
+video-to-world
+Download and Post-Train
+Experience
+Experience
+Model Card
+Model Card
+System Card
+System Card
+Accelerated by DGX Cloud
+Step 
+1
+:
+Select a Scenario
+Video
+Select one of the Scenarios to enhance.
+Step 
+2
+:
+Generate Video
+Customize and generate a video based on the scenario.
+Choose an input source to generate diverse scenarios from. Then proceed to Step 2 to customize a prompt and create a Cosmos video.
+AV Simulation and Real Fleet Scenarios
+Robotics Scenarios
+Continue to Step 2
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+Search
+⌘K
+Ctrl+K
+?
+Login
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+?
+Terms of Use
+Privacy Policy
+Your Privacy Choices
+Contact
+Copyright © 
+2026
+ NVIDIA Corporation

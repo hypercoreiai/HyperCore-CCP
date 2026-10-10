@@ -1,0 +1,123 @@
+Description
+
+The Riva-Translate-4B-Instruct-v2 Neural Machine Translation model translates text in English and 36 non-English languages. The supported languages are: English(en), Czech(cs), Danish(da), German(de), Greek(el), European Spanish(es-ES), LATAM Spanish(es-US), Finnish(fi), French(fr), Hungarian(hu), Italian(it), Lithuanian(lt), Latvian(lv), Dutch(nl), Norwegian(no), Polish(pl), European Portuguese(pt-PT), Brazilian Portuguese(pt-BR), Romanian(ro), Russian(ru), Slovak(sk), Swedish(sv), Simplified Chinese(zh-CN), Traditional Chinese(zh-TW), Japanese(ja), Hindi(hi), Korean(ko), Estonian(et), Slovenian(sl), Bulgarian(bg), Ukrainian(uk), Croatian(hr), Arabic(ar), Vietnamese(vi), Turkish(tr), Indonesian(id), Thai(th).
+
+It supports both sentence- and document-level translation. The model surpasses all in-house NMT models we've built so far.
+
+*This model is ready for commercial or non-commercial use.*
+
+## License and Terms of Use:
+
+GOVERNING TERMS: This trial service is governed by the [NVIDIA API Trial Terms of Service](https://assets.ngc.nvidia.com/products/api-catalog/legal/NVIDIA%20API%20Trial%20Terms%20of%20Service.pdf). Use of this model is governed by the [NVIDIA Open Model License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/).
+
+## Deployment Geography:
+
+Global
+
+## Use Case:
+
+Translators, marketers, and web developers who deliver content in multiple languages.
+
+## Release Date:
+
+Build.nvidia.com 07/27/2026 via [Link](https://build.nvidia.com/nvidia/riva-translate-4b-instruct-v2)
+
+## Reference(s):
+
+1. [Vaswani, Ashish, et al. "Attention Is All You Need." arXiv:1706.03762 (2017).](https://arxiv.org/abs/1706.03762)
+2. <https://github.com/openai/tiktoken>
+3. <https://en.wikipedia.org/wiki/BLEU>
+4. <https://github.com/mjpost/sacreBLEU>
+5. <https://github.com/Unbabel/COMET>
+6. [NVIDIA NeMo Toolkit](https://github.com/NVIDIA/NeMo)
+
+## Model Architecture:
+
+**Architecture Type:** Transformer  
+**Network Architecture:** Decoder-only
+
+This model was developed based on Transformer architecture originally presented in "Attention Is All You Need" paper [1]. It is a fine-tuned version of a 4B Base model that was pruned and distilled from nvidia/Mistral-NeMo-Minitron-8B-Base using our LLM compression technique. The model was trained using a multi-stage CPT and SFT. It uses tiktoken [2] as the tokenizer. The model supports a context length of 8K tokens. The model has 4,179,704,832, parameters.
+
+### Input:
+
+**Input Types:** Text  
+**Input Formats:** String  
+**Input Parameters:** One-Dimensional (1D)  
+**Other Input Properties:** This model supports a context length of 8K.
+
+### Output:
+
+**Output Types:** Text  
+**Output Format:** String  
+**Output Parameters:** One-Dimensional (1D)  
+**Other Output Properties:** This model supports a context length of 8K.
+
+Our AI models are designed and/or optimized to run on NVIDIA GPU-accelerated systems. By leveraging NVIDIA’s hardware (e.g. GPU cores) and software frameworks (e.g., CUDA libraries), the model achieves faster training and inference times compared to CPU-only solutions.
+
+## Prompt Format
+
+We recommend using the following prompt template, which was used to fine-tune the model. The model may not perform optimally without it.
+
+```python
+messages = [
+    {
+        "role": "system",
+        "content": "en-zh-cn",
+    },
+    {"role": "user", "content": "The GRACE mission is a collaboration between the NASA and German Aerospace Center.?"},
+]
+```
+
+## Software Integration:
+
+**Runtime Engine(s):** NeMo Framework 24.09
+
+**Supported Hardware Microarchitecture Compatibility:**
+
+- NVIDIA Ampere
+- NVIDIA Blackwell
+- NVIDIA Hopper
+- NVIDIA Lovelace
+
+**Supported Operating System(s):**
+
+- Linux
+
+The integration of foundation and fine-tuned models into AI systems requires additional testing using use-case-specific data to ensure safe and effective deployment. Following the V-model methodology, iterative testing and validation at both unit and system levels are essential to mitigate risks, meet technical and functional requirements, and ensure compliance with safety and ethical standards before deployment.
+
+## Model Version(s)
+
+Riva-Translate-4B-Instruct-v2
+
+## Training, Testing, and Evaluation Datasets:
+
+### Training Dataset
+
+**Data Modality:** Text  
+**Text Training Data Size:** 1 Billion to 10 Trillion Tokens  
+**Training Data Collection:** Hybrid: Human, Synthetic  
+**Training Labeling:** Hybrid: Human, Synthetic  
+**Training Properties:** No personal data; copyright protected content. The training set consists of pairs of source text with its translation. The style of the translations ranges from conversational to formal.
+
+### Testing Dataset
+
+**Testing Data Collection:** Automated  
+**Testing Labeling:** Human  
+**Testing Properties:** [FLORES-101](https://huggingface.co/datasets/gsarti/flores_101). No personal data; copyright protected content. The test set consists of pairs of source text with its translation. The style of the translations ranges from conversational to formal.
+
+### Evaluation Dataset
+
+**Evaluation Data Collection:** Automated  
+**Evaluation Labeling:** Human  
+**Evaluation Properties:** [FLORES-101](https://huggingface.co/datasets/gsarti/flores_101). No personal data; copyright protected content. The evaluation set consists of pairs of source text with its translation. The style of the translations ranges from conversational to formal.
+
+### Benchmark Score
+
+sacreBLEU and WMT20-COMET-da scores for any2en and en2any directions
+
+| Language               | Eng -> Language (BLEU / COMET) | Language -> Eng (BLEU / COMET) |
+|------------------------|--------------------------------|--------------------------------|
+| Czech                  | 29.1 / 0.900                   | 40.6 / 0.752                   |
+| Danish                 | 42.7 / 0.839                   | 48.0 / 0.833                   |
+| German                 | 36.3 / 0.666                   | 44.4 / 0.769                   |
+| Gre

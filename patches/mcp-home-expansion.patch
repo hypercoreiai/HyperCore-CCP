@@ -1,0 +1,40 @@
+--- serve/mcp/__init__.py	2026-10-05 17:47:44.130006946 +0000
++++ patches/__init__.py.new	2026-10-05 18:38:11.254743649 +0000
+@@ -624,6 +624,28 @@
+ 
+ 
+ # ------------------------------------------------------------------------------------------------ config
++def _expand_path(value):
++    """`~`, `$HOME` and `${HOME}` in a server entry resolve to the running user's home, so one
++    mcp.yaml works for every profile on the machine. `$HOME` only matches when the name ends
++    there, so `$HOME_SUFFIX` is left alone."""
++    if not isinstance(value, str) or not value:
++        return value
++    home = os.environ.get("HOME") or str(Path.home())
++    text = re.sub(r"\$\{HOME\}|\$HOME(?![A-Za-z0-9_])", home, value)
++    if text.startswith("~"):
++        text = home + text[1:]
++    return text
++
++def _expand_paths(cfg: dict) -> dict:
++    for key in ("command", "cwd", "url"):
++        if isinstance(cfg.get(key), str):
++            cfg[key] = _expand_path(cfg[key])
++    if isinstance(cfg.get("args"), list):
++        cfg["args"] = [_expand_path(a) for a in cfg["args"]]
++    for key in ("env", "headers"):
++        if isinstance(cfg.get(key), dict):
++            cfg[key] = {k: _expand_path(v) for k, v in cfg[key].items()}
++    return cfg
+ def _check_server(name, cfg, where) -> dict:
+     if not isinstance(cfg, dict):
+         raise SystemExit(f"[hypercore] {where}: MCP server {name!r} must be an object with \"command\" or \"url\"")
+@@ -640,7 +662,7 @@
+         raise SystemExit(f"[hypercore] {where}: MCP server {name!r}: \"args\" must be a list")
+     if not isinstance(cfg.get("env") or {}, dict):
+         raise SystemExit(f"[hypercore] {where}: MCP server {name!r}: \"env\" must be an object")
+-    return cfg
++    return _expand_paths(cfg)
+ 
+ 
+ def servers_from(block, where: str) -> dict[str, dict]:

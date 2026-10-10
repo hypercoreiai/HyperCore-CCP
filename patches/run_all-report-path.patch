@@ -1,0 +1,13 @@
+--- serve/mcp/tests/run_all.py	2026-10-05 17:47:44.125310285 +0000
++++ _run_all_patched.py	2026-10-05 18:38:35.449852182 +0000
+@@ -33,7 +33,9 @@
+ 
+ MODULES = ["test_contracts", "test_terminal", "test_scrape", "test_docs", "test_home", "test_web",
+          "test_hub"]
+-DEFAULT_REPORT = Path("/home/ai-agent/.terminal/retest_report.json")
++# the report lands beside the profile's own terminal state, wherever that profile is
++DEFAULT_REPORT = (Path(os.environ.get("TERMINAL_STATE_DIR") or (Path.home() / ".terminal"))
++                  .expanduser() / "retest_report.json")
+ OUTCOMES = ("pass", "fail", "error", "skip")
+ 
+ 

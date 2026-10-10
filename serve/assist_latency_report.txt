@@ -1,0 +1,81 @@
+12 of 80 model(s) answered under 1.0s -> /home/ai-user0/HyperCore/serve/assist_fast_models.json
+  poolside/laguna-xs-2.1                                  0.169s  (best 0.166, worst 0.177)
+  nvidia/nemotron-parse-2.0                               0.261s  (best 0.253, worst 0.262)
+  nvidia/nemotron-3-nano-omni-30b-a3b-reasoning           0.264s  (best 0.173, worst 1.652)
+  google/diffusiongemma-26b-a4b-it                        0.269s  (best 0.266, worst 0.364)
+  meta/llama-3.2-11b-vision-instruct                      0.294s  (best 0.292, worst 18.336)
+  nvidia/nemotron-3.5-lightning-30b-a3b                   0.338s  (best 0.288, worst 0.387)
+  nvidia/nemotron-3-super-120b-a12b                       0.429s  (best 0.386, worst 0.634)
+  z-ai/glm-5.3                                            0.462s  (best 0.357, worst 1.943)
+  openai/gpt-oss-20b                                      0.489s  (best 0.405, worst 0.597)
+  nvidia/ising-calibration-1.5-31b                        0.599s  (best 0.357, worst 0.655)
+  meta/muse-glimmer-30b                                   0.758s  (best 0.724, worst 0.845)
+  nvidia/nemotron-3-ultra-550b-a55b                       0.896s  (best 0.884, worst 1.490)
+  nvidia/llama-3.1-nemotron-safety-guard-8b-v3            1.727s  (best 1.021, worst 9.777)
+  moonshotai/kimi-k3                                      1.752s  (best 0.433, worst 2.910)
+  nvidia/nemotron-3.5-content-safety                      2.928s  (best 0.280, worst 8.287)
+  meta/llama-3.2-90b-vision-instruct                      10.963s  (best 1.976, worst 14.389)
+  z-ai/glm-5.3-flash                                      38.338s  (best 32.440, worst 55.467)
+  nvidia/riva-translate-4b-instruct-v2                    44.542s  (best 29.633, worst 58.228)
+  bigcode/starcoder2-15b                                  HTTP 404
+  adept/fuyu-8b                                           HTTP 404
+  aisingapore/sea-lion-7b-instruct                        HTTP 404
+  ai21labs/jamba-1.5-large-instruct                       HTTP 404
+  databricks/dbrx-instruct                                HTTP 404
+  deepseek-ai/deepseek-coder-6.7b-instruct                HTTP 404
+  01-ai/yi-large                                          HTTP 404
+  google/codegemma-1.1-7b                                 HTTP 404
+  google/gemma-2b                                         HTTP 404
+  google/gemma-3-12b-it                                   HTTP 404
+  google/gemma-3-4b-it                                    HTTP 404
+  google/deplot                                           HTTP 404
+  google/codegemma-7b                                     HTTP 404
+  ibm/granite-34b-code-instruct                           HTTP 404
+  ibm/granite-3.0-8b-instruct                             HTTP 404
+  ibm/granite-3.0-3b-a800m-instruct                       HTTP 404
+  google/recurrentgemma-2b                                HTTP 404
+  ibm/granite-8b-code-instruct                            HTTP 404
+  meta/codellama-70b                                      HTTP 404
+  meta/llama2-70b                                         HTTP 404
+  microsoft/kosmos-2                                      HTTP 404
+  microsoft/phi-3-vision-128k-instruct                    HTTP 404
+  microsoft/phi-3.5-moe-instruct                          HTTP 404
+  mistralai/codestral-22b-instruct-v0.1                   HTTP 404
+  mistralai/mistral-7b-instruct-v0.3                      HTTP 404
+  mistralai/mistral-large                                 HTTP 404
+  mistralai/mixtral-8x22b-v0.1                            HTTP 404
+  mistralai/mistral-large-2-instruct                      HTTP 404
+  moonshotai/kimi-k2.6                                    HTTP 404
+  nv-mistralai/mistral-nemo-12b-instruct                  HTTP 404
+  nvidia/ai-synthetic-video-detector                      HTTP 500
+  nvidia/cosmos-reason2-8b                                HTTP 404
+  nvidia/embed-qa-4                                       HTTP 404
+  nvidia/llama-3.1-nemoguard-8b-topic-control             the model returned an empty response
+  nvidia/llama-3.1-nemotron-51b-instruct                  HTTP 404
+  nvidia/llama-3.1-nemotron-70b-instruct                  HTTP 404
+  nvidia/llama-3.1-nemotron-ultra-253b-v1                 HTTP 404
+  nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1          HTTP 404
+  nvidia/llama-3.2-nv-embedqa-1b-v1                       HTTP 404
+  nvidia/llama-nemotron-embed-vl-1b-v2                    HTTP 404
+  nvidia/llama3-chatqa-1.5-70b                            HTTP 404
+  nvidia/mistral-nemo-minitron-8b-8k-instruct             HTTP 404
+  nvidia/nemotron-3-embed-1b                              HTTP 404
+  nvidia/nemotron-4-340b-instruct                         HTTP 404
+  nvidia/nemotron-4-340b-reward                           HTTP 404
+  nvidia/nemotron-nano-3-30b-a3b                          HTTP 404
+  nvidia/nemotron-parse                                   HTTP 400
+  nvidia/neva-22b                                         HTTP 404
+  nvidia/nv-embedqa-mistral-7b-v2                         HTTP 404
+  nvidia/nvclip                                           HTTP 404
+  nvidia/riva-translate-4b-instruct                       HTTP 404
+  nvidia/vila                                             HTTP 404
+  snowflake/arctic-embed-l                                HTTP 404
+  writer/palmyra-creative-122b                            HTTP 404
+  writer/palmyra-fin-70b-32k                              HTTP 404
+  writer/palmyra-med-70b                                  HTTP 404
+  writer/palmyra-med-70b-32k                              HTTP 404
+  zyphra/zamba2-7b-instruct                               HTTP 404
+  deepseek-ai/deepseek-v4.1-flash                         The read operation timed out
+  google/gemma-4-31b-it                                   The read operation timed out
+  meta/llama-guard-4-12b                                  The read operation timed out
+  nvidia/llama-3.1-nemoguard-8b-content-safety            The read operation timed out

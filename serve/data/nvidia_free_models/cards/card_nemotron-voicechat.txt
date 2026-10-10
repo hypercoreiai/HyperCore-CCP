@@ -1,0 +1,106 @@
+Model Overview
+
+### Description:
+
+NVIDIA Nemotron™ 3 VoiceChat is a 12B end-to-end, realtime full duplex speech-to-speech model for conversational AI that jointly performs streaming speech understanding and speech generation [1]. Unlike traditional cascaded stacks (ASR → LLM → TTS), this model achieves full duplex, real-time, seamless voice interaction in one unified architecture, eliminating the need for multiple models or API handoffs, reducing end-to-end latency.  
+It sets new benchmarks by bringing open, robust, and highly natural conversation capabilities to enterprises. 
+
+The model operates on audio signals, which are encoded using a fast conformer module. The resulting audio tokens are inputted into a Nemotron Nano V2 9B LLM backbone to predict text tokens, which are fed to a TTS decoder [2] to predict audio codes for generating the agent's speech. The model supports persona control through text-based role prompts based on NVIDIA PersonaPlex [3].
+Nemotron 3 VoiceChat offers an unprecedented trade-off between intelligence and latency in the space of open source voice agents, as highlighted by our benchmarking results [below](#testingevaluation-dataset).
+
+This model is ready for early access evaluation purposes only.
+
+
+### License/Terms of Use:
+GOVERNING TERMS: Your use of this API is governed by the [NVIDIA API Trial Service Terms of Use](https://assets.ngc.nvidia.com/products/api-catalog/legal/NVIDIA%20API%20Trial%20Terms%20of%20Service.pdf); use of NIM container and the use of this model is governed by the [NVIDIA Software and Model Evaluation License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-and-model-evaluation-license/).
+
+### Use Case: <br>
+Nemotron 3 VoiceChat is targeted for researchers, developers, and professionals in the field of natural language processing (NLP) and speech technology for purposes such as automatic speech recognition (ASR), text-to-speech synthesis (TTS), and voice assistant development.
+
+### Deployment Geography:
+Global
+
+### Release Date:  <br>
+NGC [03/16/2026] via [Nemotron Voicechat Model on NGC](https://registry.ngc.nvidia.com/orgs/nim/teams/nvidia/models/nemotron-voicechat) <br> 
+
+## References(s):
+[1] [SALM-Duplex: Efficient and Direct Duplex Modeling for Speech-to-Speech Language Model](https://arxiv.org/abs/2505.15670) <br> 
+[2] [Audio Flamingo 3: Advancing Audio Intelligence with Fully Open Large Audio Language Models](https://arxiv.org/abs/2507.08128) <br>
+[3] [PersonaPlex: Voice and role control for full duplex conversational speech models](https://research.nvidia.com/labs/adlr/files/personaplex/personaplex_preprint.pdf) <br>
+
+
+## Model Architecture:
+**Architecture Type:** Hybrid Mamba/Transformer <br>
+
+**Network Architecture:** <br>
+
+Nemotron VoiceChat uses:
+* Fast Conformer Speech Encoder from [Nemotron-Speech-Streaming-En-0.6b](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b)
+* [NVIDIA Nemotron Nano v2 LLM backbone](https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-9B-v2)
+* NVIDIA TTS decoder and codec [2]
+* Number of model parameters: 12B <br>
+
+
+## Input(s): <br>
+**Input Type(s):** Text (prompt), Audio (user speech) <br>
+**Input Format:** String, WAV/WebAudio <br>
+**Input Parameters:** One-Dimensional (1D), One-Dimensional (1D) <br>
+**Other Properties Related to Input:** 16 kHz sample rate for audio. <br>
+
+## Output(s)
+**Output Type(s):** Text (agent text), Audio (agent speech), Text (user speech transcription) <br>
+**Output Format:** String, WAV/WebAudio <br>
+**Output Parameters:** One-Dimensional (1D), One-Dimensional (1D), One-Dimensional (1D) <br>
+**Other Properties Related to Output:** 22.05 kHz sample rate for audio. <br>
+
+Our AI models are designed and/or optimized to run on NVIDIA GPU-accelerated systems. By leveraging NVIDIA’s hardware (e.g. GPU cores) and software frameworks (e.g., CUDA libraries), the model achieves faster training and inference times compared to CPU-only solutions. <br> 
+
+## Software Integration:
+**Runtime Engine:** vLLM <br>
+
+**Supported Hardware Microarchitecture Compatibility:** <br>
+* NVIDIA Hopper (H100)
+
+**Preferred/Supported Operating System(s):**
+* Linux
+
+The integration of foundation and fine-tuned models into AI systems requires additional testing using use-case-specific data to ensure safe and effective deployment. Following the V-model methodology, iterative testing and validation at both unit and system levels are essential to mitigate risks, meet technical and functional requirements, and ensure compliance with safety and ethical standards before deployment. <br>
+
+## Model Version(s):
+* v1.0
+
+## Training, Testing, and Evaluation Datasets:
+
+### Training Dataset:
+
+**Data Modality:** Audio (speech) and Text <br>
+**Audio Training Data Size:** 10,000 to 1 Million Hours <br>
+
+VoiceChat has been trained on a blend of different datasets comprising both real audio datasets and synthetic speech datasets generated using various TTS systems on text training corpora, including:
+
+- Nemotron 5.5 pre-training and SFT text data
+- Brainy-mantis text data
+- Greteal AI v1 and v2 text data
+- [Ultrachat text data](https://huggingface.co/datasets/HuggingFaceH4/ultrachat_200k)
+- Blackwell studio recordings real speech data
+- [Fisher real speech data](https://catalog.ldc.upenn.edu/LDC2004S13)
+- [LibriVox](https://librivox.org/)
+- [LibriTTS](https://www.openslr.org/60/)
+- [HiFi-TTS](https://www.openslr.org/109/)
+- Riva Speakers: Internal Dataset
+- Publicly available internet scale data
+- [PromptTTS](https://speechresearch.github.io/prompttts/)
+- [VCTK](https://datashare.ed.ac.uk/handle/10283/3443)
+- [Voxmovies](https://mmai.io/datasets/voxmovies/)
+- [JL-Corpus](https://huggingface.co/datasets/CLAPv2/JL-Corpus)
+- Nemotron Nano v3 function calling data
+- Persona Plex training datasets
+
+**Data Collection Method by dataset:** Hybrid: Human, Synthetic, Automated. <br>
+**Labeling Method by dataset:** Automated. <br>
+
+### Testing/Evaluation Dataset:
+
+#### VoiceBench
+
+**Link:** [V

@@ -1,0 +1,103 @@
+Active Speaker Detection Model by NVIDIA | NVIDIA NIM
+Skip to main content
+Search
+⌘K
+Ctrl+K
+Login
+NVIDIA
+Active Speaker Detection
+Downloadable
+Free Endpoint
+Detect and track speaker identities across video frames.
+2110
+broadcast
+broadcast-logging
+dubbing
+localization
+nvidia ai for media
+nvidia holoscan for media
+smpte
+speaker detection
+Get API Key
+Experience
+Experience
+Model Card
+Model Card
+Try API
+Try API
+Deploy
+Deploy
+API Reference
+API Reference
+Accelerated by DGX Cloud
+Input
+View Examples
+Video Input
+Drop files here
+.mp4
+.
+mp4
+Upload Video
+Diarization File
+Diarization File
+.
+json
+Upload File
+Upload a pre-generated JSON file to align known speaker segments with the video. For generating diarization data from an audio stream, refer to
+NVIDIA RIVA ASR Services
+.
+Advanced Settings
+Isolated Speech Track
+0:00
+Upload an audio file
+.
+wav
+Upload File
+Upload a clean audio track to improve speaker detection. Ideal for videos with background noise.
+Using free API
+for development
+Free APIs for development
+Your API requests may be rate limited. Traffic from other users may cause throttling.
+Upgrade
+Get API Key
+Copied
+Copy
+GOVERNING TERMS
+: This trial service is governed by the 
+NVIDIA API Trial Terms of Service
+. Use of the models is governed by the 
+ NVIDIA Open Model License
+. Additional Information: 
+MIT
+.
+Reset
+Run
+Output
+Click Run to process video
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+Search
+⌘K
+Ctrl+K
+?
+Login
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+?
+Terms of Use
+Privacy Policy
+Your Privacy Choices
+Contact
+Copyright © 
+2026
+ NVIDIA Corporation

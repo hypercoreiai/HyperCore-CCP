@@ -1,0 +1,140 @@
+# Model Overview
+
+## Description
+Kumo-Tabular 1.0 is NVIDIA's tabular foundation model. It predicts classification labels and regression targets for tabular data by in-context learning: given a table of labeled context rows and unlabeled query rows with the same columns, the network returns class probabilities or numeric predictions for the query rows in a single forward pass. No task-specific training, gradient updates, or hyperparameter tuning is needed.
+
+Kumo-Tabular 1.0 is part of the Kumo family of structured-data models, alongside [Kumo Relational](https://build.nvidia.com/nvidia/kumo-relational/modelcard). It was pretrained only on synthetic tables generated from structural causal models; no real-world data was used for training. Three sizes are released: Kumo-Tabular-Small (about 28M parameters), Kumo-Tabular-Medium (about 62M parameters), and Kumo-Tabular-Large (about 215M parameters). The model accepts structured-data arrays or Arrow IPC payloads through the NVIDIA structured-data-models library for synchronous inference.
+
+_This model is ready for commercial or non-commercial use._
+
+## License and Terms of Use:
+**GOVERNING TERMS:** The NIM container is governed by the [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) and the [Product-Specific Terms for NVIDIA AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/). Use of the model is governed solely by the [OpenMDW License Agreement, version 1.1](https://openmdw.ai/license/1-1/) (OpenMDW-1.1).
+
+## Deployment Geography:
+Global
+
+## Use Case:
+**Use Case:** Kumo-Tabular is for data scientists, machine learning engineers, and application developers who need accurate predictions on structured tabular data without training and tuning a task-specific model. Typical uses are classification tasks such as churn, default, fraud, and conversion prediction, and regression tasks such as demand, price, and duration forecasting from tabular features, across domains such as finance, retail, marketing, healthcare analytics, and operations. It suits both small tables, where training a dedicated model is impractical, and iterative workflows, where a new prediction task can be set up in minutes. The weights can also be used for research on tabular foundation models and in-context learning.
+
+## Release Date:
+**Hugging Face:** 09/23/2026 via [https://huggingface.co/nvidia/Kumo-Tabular](https://huggingface.co/nvidia/Kumo-Tabular)
+
+## Model Architecture:
+**Architecture Type:** Transformer
+**Network Architecture:**
+
+* Kumo-Tabular is a three-stage tabular transformer:
+  1. Cell embedding: each table cell becomes a token built from Fourier features of its value; missing cells are imputed with the column mean of the context rows and marked by a learned missingness term. Context rows also receive an embedding of their label.
+  2. Table encoder: alternating column stages and row stages. A column stage attends over the rows of one column through a fixed set of inducing points, so its cost grows linearly with the number of rows. A row stage attends across the columns of one row, with rotary position encoding for column order. Each row is summarized into four learned summary (CLS) tokens.
+  3. In-context-learning transformer: every row attends to the labeled context rows only. A prediction head then maps each query row to class logits (classification) or to quantiles of the target (regression).
+* The three sizes share this design and differ in width and depth:
+
+| Size | Parameters | Cell embedding | Table encoder | In-context-learning transformer |
+|---|---|---|---|---|
+| Kumo-Tabular-Small | about 28 million | 128 channels per cell | 4 layers, 128 inducing points; the four CLS tokens form a 512-channel row embedding | 12 blocks, width 512, 8 attention heads |
+| Kumo-Tabular-Medium | about 62 million | 256 channels per cell | 6 layers, 256 inducing points; the four CLS tokens (1,024 channels) are projected to a 512-channel row embedding | 24 blocks, width 512, 8 attention heads |
+| Kumo-Tabular-Large | about 215 million | 256 channels per cell | 6 layers, 256 inducing points; the four CLS tokens form a 1,024-channel row embedding | 24 blocks, width 1,024, 16 attention heads |
+
+**Total Parameters:** Kumo-Tabular-Small about 28M (2.8 x 10^7); Kumo-Tabular-Medium about 62M (6.2 x 10^7); Kumo-Tabular-Large about 215M (2.2 x 10^8).
+
+### Input:
+**Input Types:** Tabular
+**Input Formats:** JSON arrays-format or Arrow IPC tabular data
+**Input Parameters:** One Dimensional (1D)
+**Other Properties Related to Input:** Requests contain one instance table with numerical and categorical features, including missing values, plus labeled context rows and prediction rows. Related tables and relationships are not supported.
+
+### Output:
+**Output Types:** Tabular predictions
+**Output Format:** JSON prediction results
+**Output Parameters:** One Dimensional (1D)
+**Other Properties Related to Output:** Classification outputs include predictions and class probabilities. Regression outputs include predictions and quantiles, including the model's native 999-quantile distribution.
+
+__Our AI models are designed and/or optimized to run on NVIDIA GPU-accelerated systems. By leveraging NVIDIA's hardware (e.g. GPU cores) and software frameworks (e.g., CUDA libraries), the model achieves faster training and inference times compared to CPU-only solutions.__
+
+## Software Integration:
+**Runtime Engines:** NVIDIA structured-data-models and PyTorch
+
+**Supported Hardware Microarchitecture Compatibility:**
+* NVIDIA Ampere
+* NVIDIA Blackwell
+* NVIDIA Hopper
+
+**Supported Operating System:** Linux
+
+__The integration of foundation and fine-tuned models into AI systems requires additional testing using use-case-specific data to ensure safe and effective deployment. Following the V-model methodology, iterative testing and validation at both unit and system levels are essential to mitigate risks, meet technical and functional requirements, and ensure compliance with safety and ethical standards before deployment.__
+
+## Model Version(s)
+Kumo-Tabular v1.0, released in three sizes: Kumo-Tabular-Small, Kumo-Tabular-Medium, and Kumo-Tabular-Large.
+
+## Training, Testing, and Evaluation Datasets:
+
+### Training Dataset
+**Data Modality:** Tabular
+**Other Training Data Size:** About 35 million synthetic tables for Kumo-Tabular-Small, 71 million for Kumo-Tabular-Medium, and 137 million for Kumo-Tabular-Large, covering tables of up to 60,000 rows and 100 feature columns with numerical and categorical features, missing values, and 2 to 10 classes.
+
+**Data Collection Method by dataset:** Synthetic
+**Labeling Method by dataset:** Synthetic
+**Properties:** Kumo Tabular was pretrained on diverse synthetic tables generated from structural causal models. The tables include numerical and categorical features with missing values; no private enterprise data or personal data was used for training.
+
+### Testing Dataset
+**Data Collection Method by dataset:** Not Applicable
+
+**Labeling Method by dataset:** Not Applicable
+
+**Properties:** Not Applicable. No synthetic test split was held out.
+
+### Evaluation Dataset
+**Evaluation Benchmark Score:** Undisclosed
+
+**Data Collection Method by dataset:** Public benchmark datasets
+**Labeling Method by dataset:** Benchmark-provided labels
+**Properties:** Public benchmark suites of real-world tabular datasets, used only for evaluation and never for training:
+* TabArena-v0.1: 51 datasets (38 classification, 13 regression); https://tabarena.ai
+* TALENT: 300 datasets (200 classification, 100 regression); https://github.com/LAMDA-Tabular/TALENT
+* BeyondArena: classification and regression datasets with random, temporal, and grouped splits; https://huggingface.co/datasets/TabArena/BeyondArena
+
+The datasets are publicly available tables from repositories such as OpenML, UCI, and Kaggle, covering finance, healthcare, retail, science, and other domains. Several of them (for example the UCI Adult census, COMPAS, German credit, and Diabetes 130-US hospitals tables) contain demographic attributes such as age, sex, or race of real individuals, as distributed by the public benchmarks.
+
+## Inference
+**Acceleration Engine:** PyTorch with NVIDIA CUDA
+**Supported Tasks:** Classification and regression
+**API Endpoints:** `POST /v1/predictions`, `POST /v1/sessions`, `POST /v1/sessions/{session_id}/predictions`, and `DELETE /v1/sessions/{session_id}`
+**Test Hardware:**
+* NVIDIA Hopper - H100
+
+## Ethical Considerations
+NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. Developers should work with their internal developer team to ensure these software components meet requirements for the relevant industry and use case and address unforeseen product misuse.
+
+Users are responsible for model inputs and outputs. Users are responsible for ensuring safe integration of this model, including implementing guardrails as well as other safety mechanisms, prior to deployment.
+
+Please report model quality, risk, security vulnerabilities or NVIDIA AI Concerns [here](https://www.nvidia.com/en-us/support/submit-security-vulnerability/).50:T9e3,| Field | Response |
+| :---- | :---- |
+| Intended Task/Domain: | Binary classification, multiclass classification, and regression over single-table structured data. |
+| Model Type: | Transformer-based tabular foundation model for in-context learning. |
+| Intended Users: | Developers and data scientists building structured-data prediction applications. |
+| Output: | Classification predictions and probabilities, or regression predictions and quantiles. |
+| Describe how the model works: | Kumo Tabular v1.0 learns from labeled context rows in a single table and predicts held-out rows without task-specific weight updates. It processes numerical and categorical features, including missing values, and models relationships across rows and columns. Attention- and feature-based explanations are approximate; post-hoc tools such as SHAP or LIME can support analysis. |
+| List the groups (or group characteristics) for which this was tested to produce comparable outcomes: | Not evaluated for comparable outcomes across protected groups. The model is pretrained on synthetic data; deployers are responsible for task- and population-specific fairness testing. |
+| Technical Limitations \u0026 Mitigation: | Supports one structured table with numerical and categorical features only—not related tables, relationships, or unstructured text, images, audio, or video. Performance depends on feature quality, labeled context, and similarity to synthetic pretraining patterns. Validate on representative use-case data. |
+| Verified to have met prescribed NVIDIA quality standards: | Yes |
+| Performance Metrics: | Evaluation covers TabArena, TALENT, BeyondArena, and ScoringBench, using task-appropriate metrics such as accuracy, log loss, RMSE, R², and MAE. |
+| Potential Known Risks: | Incorrect feature types, unsupported columns, mislabeled context rows, adversarial or poisoned inputs, and nonrepresentative data can produce inaccurate predictions. Do not use outputs as the sole basis for high-impact decisions; validate them and retain appropriate human oversight. |
+| Licensing | **GOVERNING TERMS:** The NIM container is governed by the [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) and the [Product-Specific Terms for NVIDIA AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/); model use is governed solely by the [OpenMDW License Agreement, v1.1](https://openmdw.ai/license/1-1/). |51:T400,| Field | Response |
+| :---- | :---- |
+| Generatable or reverse engineerable personal data? | No |
+| Personal data used to create this model? | No |
+| Was consent obtained for any personal data used? | Not applicable |
+| How often is dataset reviewed? | Before release |
+| Was data from user interactions with the AI model (e.g. user input and prompts) used to train the model? | No |
+| Is there provenance for all datasets used in training? | Yes. Training data is generated in-house through documented synthetic table and value-generation processes. |
+| Does data labeling (annotation, metadata) comply with privacy laws? | Not applicable to personal data: training data is synthetically generated and contains no PII or PHI. |
+| Is data compliant with data subject requests for data correction or removal, if such a request was made? | Not applicable; no personal data is used or retained in pretraining. |
+| Applicable privacy policy | [NVIDIA Privacy Policy](https://www.nvidia.com/en-us/about-nvidia/privacy-policy/) |52:T4ff,| Field | Response |
+| :---- | :---- |
+| Model Application Fields: | Predictive analytics, classification, and regression over single-table tabular data. |
+| Describe the life critical impact: | Errors may create material harm if the model is used in high-impact domains, such as credit, healthcare, or criminal justice. Validate performance for the use case and retain human oversight; do not treat outputs as ground truth. |
+| Use Case Restrictions: | Comply with the applicable [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/), [Product-Specific Terms for NVIDIA AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/), and [OpenMDW License Agreement, v1.1](https://openmdw.ai/license/1-1/). Do not deploy without use-case-specific validation, appropriate guardrails, and human oversight for consequential decisions. |
+| Model and dataset restrictions: | Pretraining uses fully synthetic tabular data. The model accepts one structured table with numerical and categorical features; it rejects related tables and relationships. Deployers must validate input data, apply access controls, and monitor for adversarial or poisoned inputs. |49:[["$","$L34",".0",{"state":{"mutations":[],"queries":[{"dehydratedAt":1791535162132,"state":{"data":"$2b:props:state:queries:0:state:data","dataUpdateCount":1,"dataUpdatedAt":1791535162074,"error":null,"errorUpdateCount":0,"errorUpdatedAt":0,"fetchFailureCount":0,"fetchFailureReason":null,"fetchMeta":null,"isInvalidated":false,"status":"success","fetchStatus":"idle"},"queryKey":"$2b:props:state:queries:0:queryKey","queryHash":"["search","labelsets","ENDPOINT"]"},{"dehydratedAt":1791535162132,"state":{"data":null,"dataUpdateCount":1,"dataUpdatedAt":1791535162075,"error":null,"errorUpdateCount":0,"errorUpdatedAt":0,"fetchFailureCount":0,"fetchFailureReason":null,"fetchMeta":null,"isInvalidated":false,"status":"success","fetchStatus":"idle"},"queryKey":"$2b:props:state:queries:1:queryKey","queryHash":"["endpoints","license","kumo-tabular"]"},{"dehydratedAt":1791535162132,"state":{"data":null,"dataUpdateCount":1,"dataUpdatedAt":1791535162075,"error":null,"errorUpdateCount":0,"errorUpdatedAt":0,"fetchFailureCount":0,"fetchFailureReason":null,"fetchMeta":null,"isInvalidated":false,"status":"success","fetchStatus":"idle"},"queryKey":"$2b:props:state:queries:2:queryKey","queryHash":"["killswitches/riva-magpie-2.enabled"]"},{"dehydratedAt":1791535162132,"state":{"data":"$2b:props:state:queries:3:state:data","dataUpdateCount":1,"dataUpdatedAt":1791535162075,"error":null,"errorUpdateCount":0,"errorUpdatedAt":0,"fetchFailureCount":0,"fetchFailureReason":null,"fetchMeta":null,"isInvalidated":false,"status":"success","fetchStatus":"idle"},"queryKey":"$2b:props:state:queries:3:queryKey","queryHash":"["killswitches/media/select-example.models.yaml"]"},{"dehydratedAt":1791535162132,"state":{"data":"$2b:props:state:queries:4:state:data","dataUpdateCount":1,"dataUpdatedAt":1791535162076,"error":null,"errorUpdateCount":0,"errorUpdatedAt":0,"fetchFailureCount":0,"fetchFailureReason":null,"fetchMeta":null,"isInvalidated":false,"status":"success","fetchStatus":"idle"},"queryKey":"$2b:props:state:queries:4:queryKey","queryHash":"["content/legal/model-terms-of-service.yaml"]"},{"dehydratedAt":1791535162132,"state":{"data":"$2b:props:state:queries:5:state:data","dataUpdateCount":1,"dataUpdatedAt":1791535162076,"error":null,"errorUpdateCount":0,"errorUpdatedAt":0,"fetchFailureCount":0,"fetchFailureReason":null,"fetchMeta":null,"isInvalidated":false,"status":"success","fetchStatus":"idle"},"queryKey":"$2b:props:state:queries:5:queryKey","queryHash":"["content/legal/playground-disclaimers.yaml"]"}]},"children":["$","$L4e",null,{"initialState":{"artifact":{"artifactType":"ENDPOINT","name":"kumo-tabular","displayName":"Kumo Tabular","publisher":"nvidia","shortDescription":"A tabular in-context learning model for classification and regression over structured tables.","logo":"https://assets.ngc.nvidia.com/products/api-catalog/images/kumo-tabular.jpg","labels":["In-Context Learning","Prediction","Structured Data","Tabular Models","nimType:endpoint:nim_type_preview","nimType:endpoint:nim_type_run_anywhere"],"attributes":[{"key":"AVAILABLE","value":"true"},{"key":"PREVIEW","value":"true"}],"updatedDate":"2026-10-06T06:37:49.434Z","bias":"| Field | Response |
+| :---- | :---- |
+| Participation considerations from adversely impacted groups [protected classes](https://www.senate.ca.gov/content/protected-classes) in model design and testing: | None. Pretraining uses fully synthetic data that does not represent real-world populations or protected classes. |
+| Measures taken to mitigate against unwanted bias: | Synthetic-only pretraining, randomized table and value generation, and normalized internal representations reduce exposure to real-world demographic bias. Deployers should evaluate fairness on their use-case data, especially where protected attributes are present. |","canGuestDownload":true,"createdDate":"2026-10-06T06:37:49.434Z","description":"$4f","explainability":"$50","isPublic":true,"isReadOnly":true,"orgName":"qc69jvmznzxy","privacy":"$51","safetyAndSecurity":"$52"},"specAttributes":"$4a:props:spec:attributes","modelPath":"/nvidia/kumo-tabular","openApiSpec":{"openapi":"3.1.0","info":{"title":"NVIDIA Kumo Tabular","description":"Universal TFM API for the NVIDIA Kumo Tabular NIM.","version":"0.0.1","termsOfService":"https://www.nvidia.com/en-us/data-center/products/nvidia-ai-enterprise/eula/","contact":{"name":"NVIDIA Enterprise Support","url":"https://www.nvidia.com/en-us/support/enterprise/"},"license":{"name":"NVIDIA Proprietary","url":"https://www.nvidia.com/en-us/data-center/products/nvidia-ai-enterprise/eula/"}},"servers":[{"url":"https://ai.api.nvidia.com"}],"tags":[{"name":"Kumo Tabular","description":"Tabular in-context learning prediction endpoints."}],"paths":{"/v1/structured-data/nvidia/kumo-tabular/models":{"get":{"tags":["Kumo Tabular"],"summary":"List available models","operationId":"nvidia-kumo-tabular-list-models","responses":{"200":{"description":"Available models","content":{"application/json":{"schema":{"type":"object","properties":{"object":{"type":"string","example":"list"},"data":{"type":"array","items":{"type":"object","properties":{

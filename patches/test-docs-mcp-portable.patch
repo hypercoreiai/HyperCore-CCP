@@ -1,0 +1,23 @@
+--- serve/test_docs_mcp.py	2026-10-05 17:47:45.054160483 +0000
++++ patches/test_docs_mcp.py.new	2026-10-05 18:37:13.725675160 +0000
+@@ -3,6 +3,7 @@
+ import json
+ import os
+ import subprocess
++import sys
+ import tempfile
+ import unittest
+ from pathlib import Path
+@@ -88,8 +89,10 @@
+         with tempfile.TemporaryDirectory() as tmp:
+             env = os.environ.copy()
+             env["HYPERCORE_DOCS_ROOT"] = tmp
+-            python = "/home/ai-agent/HyperCore/.venv/bin/python3"
+-            script = "/home/ai-agent/HyperCore/serve/mcp/docs_mcp.py"
++            # the repo root is wherever this profile happens to live: derive it from the
++            # package we already imported, and use the interpreter running the test
++            python = os.environ.get("HYPERCORE_TEST_PYTHON") or sys.executable
++            script = str(Path(docs_mcp.__file__).resolve().parent / "mcp" / "docs_mcp.py")
+             proc = subprocess.Popen(
+                 [python, script], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                 env=env, text=True)

@@ -1,0 +1,268 @@
+[
+ [
+  "deepseek-v4.1-flash",
+  "552B",
+  "1,048,576",
+  "Text,Image",
+  "Text"
+ ],
+ [
+  "diffusiongemma-26b-a4b-it",
+  "25.8B",
+  "262,144",
+  "Text,Image,Video",
+  "Text"
+ ],
+ [
+  "gemma-4-31b-it",
+  "32.7B",
+  "262,144",
+  "Text,Image,Video",
+  "Text"
+ ],
+ [
+  "google-paligemma",
+  "2.9B",
+  "8,192",
+  "Text,Image",
+  "Text"
+ ],
+ [
+  "llama-3.2-11b-vision-instruct",
+  "10.7B",
+  "131,072",
+  "Text,Image",
+  "Text"
+ ],
+ [
+  "llama-3.2-90b-vision-instruct",
+  "88.6B",
+  "131,072",
+  "Text,Image",
+  "Text"
+ ],
+ [
+  "llama-guard-4-12b",
+  "12.0B",
+  "163,840",
+  "Text,Image",
+  "Text"
+ ],
+ [
+  "muse-glimmer-30b",
+  "29.8B",
+  "131,072",
+  "Text,Image",
+  "Text"
+ ],
+ [
+  "kimi-k3",
+  "2.8T",
+  "1,048,576",
+  "Text,Image",
+  "Text"
+ ],
+ [
+  "active-speaker-detection",
+  "65.2M (ASD) / 3.9M (10 GFLOPS variant) / 840K (lip reading)",
+  "",
+  "Video, Image",
+  "Speaker labels, 512-d face embeddings, scores"
+ ],
+ [
+  "bevformer",
+  "not stated",
+  "",
+  "RGB images, vehicle state, camera extrinsics",
+  "Labels (text string)"
+ ],
+ [
+  "bnr",
+  "~60M",
+  "",
+  "Audio",
+  "Audio"
+ ],
+ [
+  "body-pose",
+  "not stated in card",
+  "",
+  "Video (RGB)",
+  "3D skeleton (33 joints, SOMA 276-joint topology)"
+ ],
+ [
+  "cosmos3-nano",
+  "15.8B",
+  "262,144",
+  "Text, Image, Video + spatial controls",
+  "Images, video, action arrays"
+ ],
+ [
+  "cosmos3-nano-reasoner",
+  "not stated in card",
+  "",
+  "Text, Image, Video",
+  "Text"
+ ],
+ [
+  "ising-calibration-1-35b-a3b",
+  "31.3B",
+  "262,144",
+  "Image,Text",
+  "Text"
+ ],
+ [
+  "ising-calibration-1.5-31b",
+  "31.3B",
+  "262,144",
+  "Image,Text",
+  "Text"
+ ],
+ [
+  "kumo-relational",
+  "31M",
+  "",
+  "Tabular (multi-table)",
+  "JSON predictions"
+ ],
+ [
+  "kumo-tabular",
+  "28M (Small) / 62M (Medium) / 215M (Large)",
+  "",
+  "Tabular",
+  "JSON predictions"
+ ],
+ [
+  "magpie-tts-zeroshot",
+  "not stated",
+  "",
+  "Text",
+  "Audio (wav, 22.05 kHz, <=20 s)"
+ ],
+ [
+  "nemotron-3-embed-1b",
+  "1.1B",
+  "32,768",
+  "Text",
+  "2048-d float vectors"
+ ],
+ [
+  "nemotron-3-nano-omni-30b-a3b-reasoning",
+  "33.0B",
+  "262,144",
+  "Video,Audio,Image,Text",
+  "Text"
+ ],
+ [
+  "nemotron-3-super-120b-a12b",
+  "123.6B",
+  "1,048,576",
+  "Text",
+  "Text"
+ ],
+ [
+  "nemotron-3-ultra-550b-a55b",
+  "560.5B",
+  "1,048,576",
+  "Text",
+  "Text"
+ ],
+ [
+  "nemotron-3.5-content-safety",
+  "4.3B",
+  "131,072",
+  "Text,Image",
+  "Text"
+ ],
+ [
+  "nemotron-3.5-lightning-30b-a3b",
+  "30.0B",
+  "1,048,576",
+  "Text",
+  "Text"
+ ],
+ [
+  "nemotron-voicechat",
+  "not stated",
+  "",
+  "Audio (PCM), Text",
+  "Audio (PCM)"
+ ],
+ [
+  "riva-translate-4b-instruct-v2",
+  "4.2B",
+  "8,192",
+  "Text",
+  "Text"
+ ],
+ [
+  "sparsedrive",
+  "not stated",
+  "",
+  "Multi-view camera images + intrinsics/extrinsics",
+  "Labeled 3D bounding boxes, BEV embeddings, lane geometry"
+ ],
+ [
+  "streampetr",
+  "not stated (Undisclosed)",
+  "",
+  "6x RGB 256x704 + camera intrinsics/extrinsics",
+  "3D bounding boxes, agent attributes, BEV embeddings"
+ ],
+ [
+  "studiovoice",
+  "not stated",
+  "",
+  "Audio",
+  "Audio"
+ ],
+ [
+  "synthetic-video-detector",
+  "172M",
+  "",
+  "Video",
+  "Score / label"
+ ],
+ [
+  "gpt-oss-20b",
+  "21.0B",
+  "131,072",
+  "Text",
+  "Text"
+ ],
+ [
+  "laguna-xs-2.1",
+  "33.0B",
+  "262,144",
+  "Text",
+  "Text"
+ ],
+ [
+  "glm-5-3",
+  "753B",
+  "1,048,576",
+  "Text",
+  "Text"
+ ],
+ [
+  "glm-5-3-flash",
+  "320B",
+  "1,048,576",
+  "Text,Image",
+  "Text"
+ ],
+ [
+  "cosmos-transfer2_5-2b",
+  "2.36B",
+  "",
+  "Text + Video/Image",
+  "Video"
+ ],
+ [
+  "llama-3_1-nemotron-safety-guard-8b-v3",
+  "8.0B",
+  "8,192",
+  "Text",
+  "Text"
+ ]
+]

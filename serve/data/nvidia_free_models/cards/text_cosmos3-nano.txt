@@ -1,0 +1,81 @@
+cosmos3-nano Model by NVIDIA | NVIDIA NIM
+Skip to main content
+Search
+⌘K
+Ctrl+K
+Login
+nvidia
+/
+cosmos3-nano
+Playground
+Playground
+Model Card
+Model Card
+System Card
+System Card
+Download and Post-Train
+Input
+View Examples
+Input
+Drop files here
+.jpg, .jpeg, .png
+.
+jpg
+.
+jpeg
+.
+png
+World Creation Mode
+Generates future frames based upon an image and text input.
+User Prompt
+Text prompts are used for world generation. For best results aligned to Cosmos capabilities, use prompts for autonomous driving, robots, and industrial domains.
+Text prompts are used for world generation. For best results aligned to Cosmos capabilities, use prompts for autonomous driving, robots, and industrial domains.
+0/4000
+Using free API
+for development
+Free APIs for development
+Your API requests may be rate limited. Traffic from other users may cause throttling.
+Upgrade
+Coming Soon!
+Get API Key
+Copied
+Copy
+GOVERNING TERMS:
+ This trial service is governed by the 
+NVIDIA API Trial Terms of Service
+. The published Cosmos3 model license is 
+OpenMDW-1.1
+. For the downloadable NIM container, see the separate 
+NGC governing terms
+, including the NVIDIA Software License Agreement and Product-Specific Terms for NVIDIA AI Products.
+Reset
+Run
+Output
+Generated Future World
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+Search
+⌘K
+Ctrl+K
+?
+Login
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+?
+Terms of Use
+Privacy Policy
+Your Privacy Choices
+Contact
+Copyright © 
+2026
+ NVIDIA Corporation

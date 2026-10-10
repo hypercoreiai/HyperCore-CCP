@@ -1,0 +1,278 @@
+{
+ "active-speaker-detection": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "bevformer": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "bnr": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "body-pose": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "cosmos-transfer2_5-2b": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "cosmos3-nano-reasoner": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "cosmos3-nano": {
+  "spec": [
+   "\\\"contextLength\\\":262144,\\\"parameters\\\":15750057456"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "deepseek-v4.1-flash": {
+  "spec": [
+   "\\\"contextLength\\\":1048576,\\\"parameters\\\":\\\"552B\\\",\\\"inputModalities\\\":[\\\"Text\\\",\\\"Image\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "diffusiongemma-26b-a4b-it": {
+  "spec": [
+   "\\\"contextLength\\\":262144,\\\"parameters\\\":25823778864,\\\"inputModalities\\\":[\\\"Text\\\",\\\"Image\\\",\\\"Video\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "gemma-4-31b-it": {
+  "spec": [
+   "\\\"contextLength\\\":262144,\\\"parameters\\\":32682372656,\\\"inputModalities\\\":[\\\"Text\\\",\\\"Image\\\",\\\"Video\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "glm-5-3-flash": {
+  "spec": [
+   "\\\"contextLength\\\":1048576,\\\"parameters\\\":\\\"320B\\\",\\\"inputModalities\\\":[\\\"Text\\\",\\\"Image\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "glm-5-3": {
+  "spec": [
+   "\\\"contextLength\\\":1048576,\\\"parameters\\\":\\\"753B\\\",\\\"inputModalities\\\":[\\\"Text\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "google-paligemma": {
+  "spec": [
+   "\\\"contextLength\\\":8192,\\\"parameters\\\":2923466480,\\\"inputModalities\\\":[\\\"Text\\\",\\\"Image\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "gpt-oss-20b": {
+  "spec": [
+   "\\\"contextLength\\\":131072,\\\"parameters\\\":21000000000,\\\"inputModalities\\\":[\\\"Text\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "ising-calibration-1-35b-a3b": {
+  "spec": [
+   "\\\"contextLength\\\":262144,\\\"parameters\\\":31273088876,\\\"inputModalities\\\":[\\\"Image\\\",\\\"Text\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "ising-calibration-1.5-31b": {
+  "spec": [
+   "\\\"contextLength\\\":262144,\\\"parameters\\\":31273088876,\\\"inputModalities\\\":[\\\"Image\\\",\\\"Text\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "kimi-k3": {
+  "spec": [
+   "\\\"contextLength\\\":1048576,\\\"parameters\\\":\\\"2.8T\\\",\\\"inputModalities\\\":[\\\"Text\\\",\\\"Image\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "kumo-relational": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "kumo-tabular": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "laguna-xs-2.1": {
+  "spec": [
+   "\\\"contextLength\\\":262144,\\\"parameters\\\":33000000000,\\\"inputModalities\\\":[\\\"Text\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "llama-3.2-11b-vision-instruct": {
+  "spec": [
+   "\\\"contextLength\\\":131072,\\\"parameters\\\":10670220835,\\\"inputModalities\\\":[\\\"Text\\\",\\\"Image\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "llama-3.2-90b-vision-instruct": {
+  "spec": [
+   "\\\"contextLength\\\":131072,\\\"parameters\\\":88593355323,\\\"inputModalities\\\":[\\\"Text\\\",\\\"Image\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "llama-3_1-nemotron-safety-guard-8b-v3": {
+  "spec": [
+   "\\\"contextLength\\\":8192,\\\"parameters\\\":8030261248,\\\"inputModalities\\\":[\\\"Text\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "llama-guard-4-12b": {
+  "spec": [
+   "\\\"contextLength\\\":163840,\\\"parameters\\\":12001097216,\\\"inputModalities\\\":[\\\"Text\\\",\\\"Image\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "magpie-tts-zeroshot": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "muse-glimmer-30b": {
+  "spec": [
+   "\\\"contextLength\\\":131072,\\\"parameters\\\":29776626688,\\\"inputModalities\\\":[\\\"Text\\\",\\\"Image\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "nemotron-3-embed-1b": {
+  "spec": [
+   "\\\"contextLength\\\":32768,\\\"parameters\\\":1140918272"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "nemotron-3-nano-omni-30b-a3b-reasoning": {
+  "spec": [
+   "\\\"contextLength\\\":262144,\\\"parameters\\\":33015632214,\\\"inputModalities\\\":[\\\"Video\\\",\\\"Audio\\\",\\\"Image\\\",\\\"Text\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "nemotron-3-super-120b-a12b": {
+  "spec": [
+   "\\\"contextLength\\\":1048576,\\\"parameters\\\":123611012096,\\\"inputModalities\\\":[\\\"Text\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "nemotron-3-ultra-550b-a55b": {
+  "spec": [
+   "\\\"contextLength\\\":1048576,\\\"parameters\\\":560524578816,\\\"inputModalities\\\":[\\\"Text\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "nemotron-3.5-content-safety": {
+  "spec": [
+   "\\\"contextLength\\\":131072,\\\"parameters\\\":4300079472,\\\"inputModalities\\\":[\\\"Text\\\",\\\"Image\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "nemotron-3.5-lightning-30b-a3b": {
+  "spec": [
+   "\\\"contextLength\\\":1048576,\\\"parameters\\\":30000000000,\\\"inputModalities\\\":[\\\"Text\\\"],\\\"outputModalities\\\":[\\\"Text\\\"]"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "nemotron-voicechat": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "riva-translate-4b-instruct-v2": {
+  "spec": [
+   "\\\"parameters\\\":4179704832"
+  ],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "sparsedrive": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "streampetr": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "studiovoice": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ },
+ "synthetic-video-detector": {
+  "spec": [],
+  "desc": [
+   "Choose how you would like to connect to your DGX Spark.\\"
+  ]
+ }
+}

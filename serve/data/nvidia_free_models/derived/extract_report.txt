@@ -1,0 +1,38 @@
+active-speaker-detection               nvidia        65.2M                                          Image                  For each detected face 
+bevformer                              nvidia                                                       Multi-view Camera imag Labels                 
+bnr                                    nvidia        ~60M                                           Audio                  Audio                  
+body-pose                              nvidia                                                                                                     yes
+cosmos-transfer2_5-2b                  nvidia        2,358,047,744                                                                                
+cosmos3-nano                           nvidia                                                                                                     yes
+cosmos3-nano-reasoner                  nvidia                                                                                                     yes
+deepseek-v4.1-flash                    deepseek-ai   552B           8B (prefill), 16B (decode) 1,048,576 tokens Image, Text            Text                   
+diffusiongemma-26b-a4b-it              google        25.2B          3.8B           262,144 tokens   Text, Image, Video     Text                   
+gemma-4-31b-it                         google        30.7B                         262,144 tokens   Text, Image, Video     Text                   
+glm-5-3                                z-ai          753B total, ~40B activated per token                1,048,576 tokens Text                   Text                   
+glm-5-3-flash                          z-ai          320B total, 18B activated per token                1,048,576 tokens Text, Image            Text                   
+google-paligemma                       google        2,923,466,480                 8,192 tokens                                                   
+gpt-oss-20b                            openai        20B            4B             131,072 tokens   Text                   Text                   
+ising-calibration-1-35b-a3b            nvidia        ~35B total parameters, ~3B active per token (256 experts, 8                 262,144 tokens   Image, Text            Text                   
+ising-calibration-1.5-31b              nvidia        Approximately 31B                262,144 tokens   Text, Image            Text                   
+kimi-k3                                moonshotai    2.8T           104B           1,048,576 tokens Text, Image            Text                   
+kumo-relational                        nvidia        3.1 10^7                                       Tabular                Tabular                
+kumo-tabular                           nvidia        Kumo-Tabular-Small about 28M (2.8 x 10^7); Kumo-Tabular-Medi                                 Tabular                Tabular predictions    
+laguna-xs-2.1                          poolside      33B            3B             262,144 tokens   Text                   Text                   
+llama-3.2-11b-vision-instruct          meta          10,670,220,835                131,072 tokens                                                 
+llama-3.2-90b-vision-instruct          meta          88,593,355,323                131,072 tokens                                                 
+llama-3_1-nemotron-safety-guard-8b-v3  nvidia        8.03B                         8,192 tokens     Text                                          
+llama-guard-4-12b                      meta          12,001,097,216                163,840 tokens   Text, Image            Text                   
+magpie-tts-zeroshot                    nvidia                                                       Text                   Audio                  
+muse-glimmer-30b                       meta          29.6B                         131,072 tokens   Text, Image            Text                   
+nemotron-3-embed-1b                    nvidia        ~1.14B                        32768            Text                   Floats                 
+nemotron-3-nano-omni-30b-a3b-reasoning nvidia        3.1 x 10^10 (31B A3B)                262,144 tokens   Video, Audio, Image, T Text                   
+nemotron-3-super-120b-a12b             nvidia        120B Total / 12B Active                1,048,576 tokens Text                   Text                   
+nemotron-3-ultra-550b-a55b             nvidia        550B Total / 55B Active                1,048,576 tokens Text                   Text                   
+nemotron-3.5-content-safety            nvidia        4 Billion (4B)                131,072 tokens                                                 
+nemotron-3.5-lightning-30b-a3b         nvidia        30B Total / 3B Active                1,048,576 tokens Text                   Text                   
+nemotron-voicechat                     nvidia                                                       Text (prompt), Audio ( Text (agent text), Aud 
+riva-translate-4b-instruct-v2          nvidia                                                       Text                   Text                   
+sparsedrive                            nvidia                                                       Multi-view camera imag Ordered arrays of labe 
+streampetr                             nvidia        Undisclosed                                    Multi-view camera imag Arrays of detected 3D  
+studiovoice                            nvidia        183M                                           Audio                  Audio                  
+synthetic-video-detector               nvidia        1.72 10^8                                      Video                  Text (1D).             

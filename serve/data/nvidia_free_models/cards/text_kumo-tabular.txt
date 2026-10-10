@@ -1,0 +1,246 @@
+Kumo Tabular Model by NVIDIA | NVIDIA NIM
+Skip to main content
+Search
+⌘K
+Ctrl+K
+Login
+nvidia
+/
+Kumo Tabular
+Build
+Build
+Playground
+Playground
+Model Card
+Model Card
+API Reference
+Deploy
+Ready to scale? Choose your deployment path.
+Select your target environment
+Linux with Docker
+Linux with Docker
+Deploying your application in production? Get started with a 90-day evaluation of NVIDIA AI Enterprise
+Get NVIDIA AI Enterprise
+Follow the steps below to download and run the NVIDIA NIM inference microservice for this model on your infrastructure of choice.
+Step 
+1
+Generate API Key
+Get API Key
+Step 
+2
+Pull and Run the NIM
+Bash
+Copied
+Copy
+$ 
+docker
+ login nvcr.io
+Username: 
+$oauthtoken
+Password: 
+<
+PASTE_API_KEY_HERE
+>
+Pull and run the NVIDIA NIM with the command below. The container serves the single packaged 
+kumo-tabular
+ model; no external model mount or runtime model download is required.
+Bash
+Copied
+Copy
+docker
+ run 
+-it
+--rm
+\
+--gpus
+ all 
+\
+ --shm-size
+=
+16GB 
+\
+-p
+8000
+:8000 
+\
+ nvcr.io/nim/nvidia/kumo-tabular:1.0.0-rc2
+The NIM listens on internal port 
+8000
+ by default. Set 
+NIM_HTTP_API_PORT
+ only when intentionally changing the container listen port, and update the Docker port mapping to match.
+Step 
+3
+Test the NIM
+You can now make a local API call using this curl command:
+Bash
+Copied
+Copy
+cat
+>
+ /tmp/kumo-tabular-request.json 
+<<
+'JSON'
+{
+ "model": "kumo-tabular",
+ "task": {
+ "kind": "classification",
+ "target": {
+ "column_name": "renewed",
+ "dtype": "string",
+ "classes": [
+ "no",
+ "yes"
+ ],
+ "positive_class": "yes"
+ }
+ },
+ "schema": {
+ "instance_table": {
+ "columns": {
+ "customer_id": {
+ "dtype": "string",
+ "stype": "ID",
+ "nullable": false
+ },
+ "age": {
+ "dtype": "int64",
+ "stype": "numerical"
+ },
+ "country": {
+ "dtype": "string",
+ "stype": "categorical"
+ },
+ "plan": {
+ "dtype": "string",
+ "stype": "categorical"
+ },
+ "monthly_spend": {
+ "dtype": "float64",
+ "stype": "numerical"
+ },
+ "support_tickets": {
+ "dtype": "int64",
+ "stype": "numerical"
+ },
+ "renewed": {
+ "dtype": "string",
+ "stype": "categorical"
+ }
+ },
+ "primary_key": "customer_id"
+ },
+ "related_tables": {},
+ "relationships": []
+ },
+ "context": {
+ "instance_table": {
+ "format": "arrays",
+ "columns": [
+ "customer_id",
+ "age",
+ "country",
+ "plan",
+ "monthly_spend",
+ "support_tickets",
+ "renewed"
+ ],
+ "rows": [
+ ["ctx-001", 33, "US", "pro", 69.0, 0, "yes"],
+ ["ctx-002", 57, "CA", "free", 0.0, 4, "no"],
+ ["ctx-003", 42, "DE", "enterprise", 199.0, 1, "yes"],
+ ["ctx-004", 26, "US", "free", 0.0, 0, "no"],
+ ["ctx-005", 49, "GB", "pro", 89.5, 2, "yes"],
+ ["ctx-006", 61, "FR", "free", 0.0, 5, "no"]
+ ]
+ },
+ "related_tables": {}
+ },
+ "predict": {
+ "instance_table": {
+ "format": "arrays",
+ "columns": [
+ "customer_id",
+ "age",
+ "country",
+ "plan",
+ "monthly_spend",
+ "support_tickets"
+ ],
+ "rows": [
+ ["lead-100", 29, "US", "free", 19.99, 0]
+ ]
+ },
+ "related_tables": {}
+ },
+ "output": {
+ "fields": [
+ "prediction",
+ "probabilities"
+ ]
+ },
+ "metadata": {
+ "request_id": "kumo-tabular-catalog-demo-001"
+ }
+}
+JSON
+curl
+-X
+'POST'
+\
+'http://127.0.0.1:8000/v1/predictions'
+\
+-H
+'accept: application/json'
+\
+-H
+'Content-Type: application/json'
+\
+--data-binary @/tmp/kumo-tabular-request.json
+For more details on this NIM request format, see the API reference for 
+POST /v1/predictions
+.
+Specifications
+A tabular in-context learning model for classification and regression over structured tables.
+In-Context Learning
+Prediction
+Structured Data
+Tabular Models
+Provider
+NVIDIA
+Last Modified
+3 days ago
+Model Availability
+Free Endpoint
+Available
+Partner Endpoint
+Not available
+Download Available
+Available
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+Search
+⌘K
+Ctrl+K
+?
+Login
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+?
+Terms of Use
+Privacy Policy
+Your Privacy Choices
+Contact
+Copyright © 
+2026
+ NVIDIA Corporation

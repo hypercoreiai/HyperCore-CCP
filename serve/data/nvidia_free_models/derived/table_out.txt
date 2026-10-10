@@ -1,0 +1,40 @@
+| # | Model | Publisher | Params | Context | Input → Output | License | Released | Card source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | deepseek-v4.1-flash | deepseek-ai | 552B **Active Parameters:** 8B (… | 1,048,576 tokens - **Paramet… | Image, Text → Text | MIT License, Non-commercial, Open … | **Build.NVIDIA.com:** 09… | model card md |
+| 2 | diffusiongemma-26b-a4b-it | google | 25.2B **Active Parameters:** 3.8… | 262,144 tokens - **Parameter… | Text, Image, Video → Text | Apache 2.0, Non-commercial, Open M… | **Build.NVIDIA.com:** 06… | model card md |
+| 3 | gemma-4-31b-it | google | 30.7B **Vocabulary Size:** 262,1… | 262,144 tokens - **Parameter… | Text, Image, Video → Text | Non-commercial, Open Model License | **Build.NVIDIA.com:** 04… | model card md |
+| 4 | paligemma | google | — | 8,192 tokens - **Parameters:… | — → — | not stated | — | model card md |
+| 5 | llama-3.2-11b-vision-instruct | meta | — | 131,072 tokens - **Parameter… | — → — | Llama 3.2 Community License | ** September 25, 2024 **… | model card md |
+| 6 | llama-3.2-90b-vision-instruct | meta | — | 131,072 tokens - **Parameter… | — → — | Llama 3.2 Community License | ** September 25, 2024 **… | model card md |
+| 7 | llama-guard-4-12b | meta | — | 163,840 tokens - **Parameter… | — → — | Non-commercial | - Build.Nvidia.com: May,… | model card md |
+| 8 | muse-glimmer-30b | meta | 29.6B **Vocabulary Size:** 202,0… | 131,072 tokens - **Parameter… | Text, Image → Text | Non-commercial, Open Model Agreeme… | **Build.NVIDIA.com:** 08… | model card md |
+| 9 | kimi-k3 | moonshotai | 2.8T **Active Parameters:** 104B… | 1,048,576 tokens - **Paramet… | Text, Image → Text | MIT License, Non-commercial, Open … | **Build.NVIDIA.com:** 08… | model card md |
+| 10 | SyncDiscriminator: | nvidia | — | — | Image → — | NVIDIA Software License | HuggingFace [repo](https… | embedded card (html shell) |
+| 11 | bevformer | nvidia | — | — | Multi-view Camera images c → Labels - | Apache 2.0, Non-commercial | 03/18/2025 | model card md |
+| 12 | Training, Testing, and Evaluation … | nvidia | — | — | — → — | Open Model License | — | embedded card (html shell) |
+| 13 | Get Help | nvidia | — | — | — → — | Open Model License | Build.NVIDIA.com 09/30/2… | embedded card (html shell) |
+| 14 | Evaluation | nvidia | — | — | — → — | Non-commercial, Open Model License | Github [10/06/2025] | embedded card (html shell) |
+| 15 | cosmos3-nano | nvidia | — | — | — → — | NVIDIA Software License, OpenMDW | — | embedded card (html shell) |
+| 16 | NVIDIA Cosmos | nvidia | — | — | — → — | OpenMDW | Build.NVIDIA.com 5/31/20… | embedded card (html shell) |
+| 17 | ising-calibration-1-35b-a3b | nvidia | — | 262,144 tokens - **Parameter… | — → — | Non-commercial, Open Model License | <br> **Hugging Face:** 0… | model card md |
+| 18 | ising-calibration-1.5-31b | nvidia | — | 262,144 tokens - **Parameter… | — → — | OpenMDW | **Preview API:** 07/20/2… | model card md |
+| 19 | kumo-relational | nvidia | 3.1*10^7 ### Input: **Input Type… | — | Tabular → Tabular | NVIDIA Software License, Non-comme… | **NGC:** 08/18/2026 | embedded card (html shell) |
+| 20 | kumo-tabular | nvidia | Kumo-Tabular-Small about 28M (2.… | — | Tabular → Tabular predictions | NVIDIA Software License, Non-comme… | **Hugging Face:** 09/23/… | embedded card (html shell) |
+| 21 | llama-3.1-nemotron-safety-guard-8b… | nvidia | — | 8,192 tokens - **Parameters:… | Text <br> → — | Open Model License | **Build.NVIDIA.com** 10/… | model card md |
+| 22 | magpie-tts-zeroshot | nvidia | — | — | — → — | not stated | — | embedded card (html shell) |
+| 23 | nemotron-3-embed-1b | nvidia | — | 32,768 tokens - **Parameters… | — → — | OpenMDW | **Build.NVIDIA.com:** 07… | model card md |
+| 24 | nemotron-3-nano-omni-30b-a3b-reaso… | nvidia | — | 262,144 tokens - **Parameter… | — → — | Open Model Agreement | <br> Build.Nvidia.com 04… | model card md |
+| 25 | nemotron-3-super-120b-a12b | nvidia | — | 1,048,576 tokens - **Paramet… | — → — | Open Model License | ** | March 11, 2026 | ##… | model card md |
+| 26 | nemotron-3-ultra-550b-a55b | nvidia | — | Defaults to 256k above. To u… | — → — | OpenMDW | ** | June 4, 2026 | ## Q… | model card md |
+| 27 | nemotron-3.5-content-safety | nvidia | 4 Billion (4B) * **Fine-tuning m… | 131,072 tokens - **Parameter… | — → — | OpenMDW | - **Hugging Face:** [03/… | model card md |
+| 28 | nemotron-3.5-lightning-30b-a3b | nvidia | — | 1,048,576 tokens - **Paramet… | — → — | OpenMDW | ** | August 11, 2026 | #… | model card md |
+| 29 | nemotron-voicechat | nvidia | — | — | — → — | not stated | — | embedded card (html shell) |
+| 30 | riva-translate-4b-instruct-v2 | nvidia | — | — | — → — | not stated | — | embedded card (html shell) |
+| 31 | sparsedrive | nvidia | — | — | — → — | MIT License, Non-commercial | 03/18/2025 | model card md |
+| 32 | streampetr | nvidia | Undisclosed **Base Model:** ResN… | — | Multi-view camera images,  → Arrays of detected 3D  | Apache 2.0, Non-commercial, Open M… | 11/12/2025 | model card md |
+| 33 | studiovoice | nvidia | — | — | — → — | not stated | — | embedded card (html shell) |
+| 34 | synthetic-video-detector | nvidia | — | — | — → — | not stated | — | embedded card (html shell) |
+| 35 | gpt-oss-20b | openai | 20B <br> **Active Parameters:** … | 131,072 tokens - **Parameter… | — → — | Apache 2.0 | <br> Build.NVIDIA.com - … | model card md |
+| 36 | laguna-xs-2.1 | poolside | 33B **Active Parameters:** 3B **… | 262,144 tokens - **Parameter… | Text → Text | Non-commercial, OpenMDW, Poolside | **Build.NVIDIA.com:** 07… | model card md |
+| 37 | glm-5-3 | z-ai | — | 1,048,576 tokens - **Paramet… | — → — | not stated | **Huggingface:** 08/27/2… | model card md |
+| 38 | glm-5-3-flash | z-ai | — | 1,048,576 tokens - **Paramet… | — → — | MIT License | **Huggingface:** 08/25/2… | model card md |

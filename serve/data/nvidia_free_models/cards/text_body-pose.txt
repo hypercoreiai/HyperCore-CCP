@@ -1,0 +1,90 @@
+3D Body Pose Model by NVIDIA | NVIDIA NIM
+Skip to main content
+Search
+⌘K
+Ctrl+K
+Login
+NVIDIA
+3D Body Pose
+Downloadable
+Free Endpoint
+Estimate 3D human body pose and skeleton from video input.
+3D
+body pose
+nvidia ai for media
+skeleton
+Get API Key
+Experience
+Experience
+Model Card
+Model Card
+Try API
+Try API
+Deploy
+Deploy
+API Reference
+API Reference
+Accelerated by DGX Cloud
+Input
+View Examples
+Video Input
+Video Input
+Video File
+An MP4 video for body-pose inference.
+Loading example video…
+Layers
+Bounding boxes
+Using free API
+for development
+Free APIs for development
+Your API requests may be rate limited. Traffic from other users may cause throttling.
+Upgrade
+Get API Key
+Copied
+Copy
+GOVERNING HOSTING TERMS:
+ Use of this trial service is governed by the 
+NVIDIA API Trial Terms of Service
+. Use of the GENMO model is governed by the 
+NVIDIA Open Model License Agreement
+. Use of the Vitpose model is governed by the 
+NVIDIA Open Model License Agreement
+, the Meta 
+Dinov3 License
+ and the 
+SAM License
+; Built with Dinov3. Use of the SAM3DB-Body model is governed by the 
+NVIDIA Open Model License Agreement
+ and the 
+SAM License
+.
+Reset
+Run
+Output
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+Search
+⌘K
+Ctrl+K
+?
+Login
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+?
+Terms of Use
+Privacy Policy
+Your Privacy Choices
+Contact
+Copyright © 
+2026
+ NVIDIA Corporation

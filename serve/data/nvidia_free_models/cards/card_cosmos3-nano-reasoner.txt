@@ -1,0 +1,265 @@
+|50:T172f,# Cosmos3-Nano-Reasoner Overview
+
+## Description:
+
+NVIDIA Cosmos3-Nano is an open and customizable model for physical AI and robotics that enables robots and vision AI agents to reason like humans, using prior knowledge, physics understanding and common sense to understand and act in the real world. This model understands space, time, and fundamental physics, and can serve as a planning model to reason what steps an embodied agent might take next. It is part of Cosmos3-Nano, an Omni model capable of reasoning and generation capabilities.
+
+The model is ready for commercial use.
+
+**Model Developer**: NVIDIA
+
+## Model Versions
+
+Cosmos3-Nano is a part of the [Cosmos3 framework](https://github.com/nvidia/cosmos-framework) 
+
+Cosmos3 includes the following models:
+
+* [Cosmos3-Nano](https://huggingface.co/nvidia/Cosmos3-Nano) (Reasoning tower): Given a text prompt and an input video, think and generate the answer with respect to the input text prompt and video.  
+* [Cosmos3-Super](https://huggingface.co/nvidia/Cosmos3-Super) (Reasoning tower): Given a text prompt and an input video, think and generate the answer with respect to the input text prompt and video.
+
+## Input:
+
+Input Type(s): Text, Text+Image, Text+Video
+
+Input Format(s):
+
+* Text: String  
+* Image: jpg, png, jpeg, webp  
+* Video: mp4
+
+Input Parameters:
+
+* Text: One-dimensional (1D)  
+* Image: Two-dimensional (2D)  
+* Video: Three-dimensional (3D)
+
+Other Properties Related to Input:
+
+* Video inputs are recommended at a frame rate of 4 fps.  
+* Long-context inputs are supported up to 256K tokens.  
+* Image inputs may be passed as files or URLs.  
+* Video inputs should be mp4 and follow the 4 fps recommendation for Reasoner usage.
+
+Input Size and Length Limits:
+
+* Text: up to 256K tokens in the context window.  
+* Image: standard supported image formats passed as file or URL.  
+* Video: mp4 at the recommended 4 fps.
+
+## Output:
+
+Output Type(s): Text
+
+Output Format: String
+
+Output Parameters: Text: One-dimensional (1D)
+
+Other Properties Related to Output:
+
+* Default max\_tokens=4096+ is recommended for reasoning outputs; longer outputs may be requested.  
+* Reasoning outputs may include structured reasoning, 2D/3D point localization, and bounding-box coordinates for vision-based tasks.  
+* Outputs are not guaranteed to be correct and should not be treated as safety-certified decisions or ground truth.
+
+## Software Integration:
+
+Runtime Engine(s):
+
+* vLLM for OpenAI-compatible Reasoner serving.  
+* PyTorch and Cosmos framework workflows for local development and integration.
+
+Supported Hardware Microarchitecture Compatibility:
+
+* NVIDIA Ampere  
+* NVIDIA Blackwell  
+* NVIDIA Hopper
+
+Operating System(s):
+
+* Linux. Other operating systems have not been tested.
+
+Note: Only BF16 precision is tested. 
+
+The integration of foundation and fine-tuned models into AI systems requires additional testing using use-case-specific data to ensure safe and effective deployment. Iterative testing and validation at both unit and system levels are essential to mitigate risks, meet technical and functional requirements, and ensure compliance with safety and ethical standards before deployment.
+
+## Limitations:
+
+Cosmos3-Nano-Reasoner may produce incorrect reasoning in challenging scenarios. Object states, causal relationships, spatial geometry, temporal ordering, agent intent, and future outcomes can be misinferred. Complex or long-context inputs may yield hallucinated entities, inconsistent interpretations, or implausible predictions.
+
+## Usage:
+
+See Cosmos for details:  [https://github.com/nvidia/cosmos](https://github.com/nvidia/cosmos)
+
+### Quality Benchmarks
+
+Please see the Cosmos3 technical paper for detailed evaluations of the base model: [https://research.nvidia.com/labs/cosmos-lab/cosmos3/technical-report.pdf](https://research.nvidia.com/labs/cosmos-lab/cosmos3/technical-report.pdf)
+
+### License and Terms of Use:
+
+GOVERNING TERMS: This trial service is governed by the [NVIDIA API Trial Terms of Service](https://assets.ngc.nvidia.com/products/api-catalog/legal/NVIDIA%20API%20Trial%20Terms%20of%20Service.pdf). Use of the model is governed by [OpenMDW1.1 license](https://openmdw.ai/license/1-1/)
+
+Models are commercially usable.
+
+You are free to create and distribute Derivative Models. NVIDIA does not claim ownership to any outputs generated using the Models or Derivative Models.
+
+### Deployment Geography:
+
+Global
+
+### Release Date:
+
+Build.NVIDIA.com 5/31/2026 via [link](https://build.nvidia.com/nvidia/cosmos3-nano-reasoner)
+
+Huggingface 5/31/2026 via [link](https://huggingface.co/nvidia/Cosmos3-Nano)
+
+Downloadable NIM \- Cosmos3-Reasoner 5/31/2026  via [link](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/cosmos3-reasoner?version=1.7.0)
+
+## Ethical Considerations
+
+NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. Developers should work with their internal model team to ensure this model meets requirements for the relevant industry and use case and addresses unforeseen product misuse.
+
+Please make sure you have proper rights and permissions for all input image and video content; if image or video includes people, personal health information, or intellectual property, the image or video generated will not blur or maintain proportions of image subjects included.
+
+Users are responsible for model inputs and outputs. Users are responsible for ensuring safe integration of this model, including implementing guardrails as well as other safety mechanisms, prior to deployment.
+
+For more detailed information on ethical considerations for this model, please see the Model Card++ Explainability, Bias, Safety & Security, and Privacy subcards. 
+
+Please report security vulnerabilities or NVIDIA AI Concerns [here](https://www.nvidia.com/en-us/support/submit-security-vulnerability/).51:T1421,| Field                                                     | Response                                                                                                                                                                                                                                                                                                                                                                                |
+| :-------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Intended Application & Domain:                            | Physical AI Reasoning                                                                                                                                                                                                                                                                                                                                                                   |
+| Model Type:                                               | Transformer                                                                                                                                                                                                                                                                                                                                                                             |
+| Intended Users:                                           | Physical AI developers                                                                                                                                                                                                                                                                                                                                                                  |
+| Output:                                                   | Text                                                                                                                                                                                                                                                                                                                                                                                    |
+| Describe how the model works:                             | Given a video/image and a text prompt, the model first converts the video/image into tokens using a vision encoder and a special translator called a projector. These video tokens are combined with the text prompt and fed into the core model, which uses a mix of LLM modules and techniques. This enables the model to think step-by-step and provide detailed, logical responses. |
+| Technical Limitations:                                    | The model may not follow the video or text input accurately in challenging cases, where the input video shows complex scene composition and temporal dynamics. Examples of challenging scenes include: fast camera movements, overlapping human-object interactions, low lighting with high motion blur, and multiple people performing different actions simultaneously.               |
+| Verified to have met prescribed NVIDIA quality standards: | Yes                                                                                                                                                                                                                                                                                                                                                                                     |
+| Performance Metrics:                                      | Quantitative and Qualitative Evaluation. Cosmos-Reason2 proposes the embodied reasoning benchmark and physical common sense benchmark to evaluate accuracy with visual question answering.                                                                                                                                                                                             |
+| Potential Known Risks:                                    | The model's output can generate all forms of texts, including what may be considered toxic, offensive, or indecent.                                                                                                                                                                                                                                                                     |
+| Licensing:                                                | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license). Additional Information: [Apache License 2.0](https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/apache-2.0.md).52:T563,| Field                                                               | Response                                                                       |
+| :------------------------------------------------------------------ | :----------------------------------------------------------------------------- |
+| Generatable or reverse engineerable personal data?                  | No                                                                             |
+| Personal data used to create this model?                            | None Known                                                                     |
+| Was consent obtained for any personal data used?                    | None Known                                                                     |
+| How often is dataset reviewed?                                      | Before Release                                                                 |
+| Is there provenance for all datasets used in training?              | Yes                                                                            |
+| Does data labeling (annotation, metadata) comply with privacy laws? | Yes                                                                            |
+| Applicable Privacy Policy                                           | [NVIDIA Privacy Policy](https://www.nvidia.com/en-us/about-nvidia/privacy-policy) |53:T8e7,| Field                                           | Response                                                                                                                                                                                                                                                                                                                             |
+| :---------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model Application(s):                           | Physical AI common sense understanding and embodied reasoning                                                                                                                                                                                                                                                                        |
+| Describe the life critical impact (if present). | None Known                                                                                                                                                                                                                                                                                                                           |
+| Use Case Restrictions:                          | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license). Additional Information: [Apache License 2.0](https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/apache-2.0.md).                                                                                |
+| Model and dataset restrictions:                 | The Principle of least privilege (PoLP) is applied limiting access for dataset generation and model development.  Restrictions enforce dataset access during training, and dataset license constraints adhered to. Model checkpoints are made available on Hugging Face, and may become available on cloud providers' model catalog. |49:[["$","div",".3",{"className":"relative","children":[["$","div",null,{"className":"relative flex min-h-[194px] w-full flex-col overflow-hidden p-md sm:p-ml bg-manitoulinLightBlack","children":[["$","$L4c",null,{"alt":"","className":"object-cover object-center !left-1/2 z-10 !w-1/2 brightness-20 lg:brightness-75","fill":true,"priority":true,"src":"https://assets.ngc.nvidia.com/products/api-catalog/images/cosmos3-nano-reasoner.jpg","style":{"maskImage":"linear-gradient(to left, rgba(0,0,0,1), rgba(0,0,0,0))"}}],["$","div",null,{"className":"z-30 mx-auto flex w-full max-w-screen-xl min-w-0 flex-1 flex-col items-start justify-between gap-md lg:flex-row lg:gap-ml","children":["$","section",null,{"aria-describedby":"resource-description","aria-labelledby":"resource-name","className":"flex w-full min-w-0 flex-col lg:flex-1","children":["$","div",null,{"className":"flex flex-col gap-1.5 whitespace-pre-wrap","children":[["$","$L4d",null,{"className":"w-fit text-ml text-n300 lowercase hover:text-n050","href":"/nvidia","children":"NVIDIA"}],["$","div",null,{"className":"flex flex-col items-start gap-3 lg:flex-row lg:items-center","children":[["$","h1",null,{"className":"max-w-full text-lg leading-heading font-medium break-words text-primary","data-testid":"resource-name","id":"resource-name","children":"cosmos3-nano-reasoner"}],["$","$L4e",null,{"artifact":{"artifactType":"ENDPOINT","name":"cosmos3-nano-reasoner","displayName":"cosmos3-nano-reasoner","publisher":"nvidia","shortDescription":"Vision language model that excels in understanding the physical world using structured reasoning on videos or images.","logo":"https://assets.ngc.nvidia.com/products/api-catalog/images/cosmos3-nano-reasoner.jpg","labels":["Physical AI","autonomous vehicles","industrial","nimType:endpoint:nim_type_preview","nimType:endpoint:nim_type_run_anywhere","reasoning","robotics","smart cities","usecase:endpoint:usecase_sdg","video understanding","vision language model"],"attributes":[{"key":"AVAILABLE","value":"true"},{"key":"PREVIEW","value":"true"},{"key":"last_month_api_invocation_count","value":"2442"},{"key":"last_month_download_count","value":"0"}],"updatedDate":"2026-06-01T04:48:10.668Z","bias":"$4f","canGuestDownload":true,"createdDate":"2026-06-01T04:48:10.668Z","description":"$50","explainability":"$51","isPublic":true,"isReadOnly":true,"orgName":"qc69jvmznzxy","privacy":"$52","safetyAndSecurity":"$53"}}],"$undefined"]}],"$L54","$L55"]}]}]}],"$L56"]}],"$L57"]}]]
+59:T541,
+Okay, let's see. The video has two robot arms. Robot Arm 1 is holding a yellow object on the left, not moving. Robot Arm 2 is on the right and has just picked up a white object from the table. The white object was near the air column wrap, which is on the right side next to the cardboard box. The air column wrap is partially unrolled, so maybe it's for packaging.
+
+Since Robot Arm 2 has lifted the white object, the next step would likely be moving it towards the cardboard box. The box is open and has plastic-wrapped items inside. The white object might be placed into the box, possibly to be packed with the other items. Since the air column wrap is nearby, maybe they use it to cushion the item. So the next action is probably moving the white object to the box and placing it inside, maybe using the air column wrap for protection. But since the air column wrap is stationary, maybe the robot just places the white object into the box. Alternatively, the robot might position the white object near the air column wrap to wrap it, but since the air column wrap is already there, maybe the next immediate step is placing the white object into the box. So the answer should be that Robot Arm 2 moves the white object towards the cardboard box to place it inside.
+
+
+
+
+Robot Arm 2 places the white object into the cardboard box5a:T41f,The contents of the message.
+Can only be `null` as part of a last request message with role=`assistant` (for "completion mode", i.e. providing the beginning of the assistant response).
+To pass images (only with role=`user`):
+    - When content is a string, images can be passed together with the text with `img` HTML tags with base64 data: `` .
+ If the size of an image is more than 180KB, it needs to be uploaded to a presigned S3 bucket using NVCF Asset APIs. Once uploaded you can refer to it using the following format: `` .
+    - When content is a list of objects, images can be passed with objects with type=`image_url`, and image_url containing the base64 image data: `data:image/{format};base64,{base64encodedimage}`. HTML `img` tags will not be parsed from objects with type=`text`.
+    - In both cases, images can be PNG, JPG or JPEG.
+For `system` and `assistant` roles, the object list format is not supported.
+5b:T75f,## Step 1. Generate API Key
+
+::generate-api-key
+
+## Step 2. Pull and Run the NIM
+
+```bash
+$ docker login nvcr.io
+Username: $oauthtoken
+Password: 
+```
+
+Pull and run the NVIDIA NIM with the command below. This will download the optimized model for your infrastructure.
+
+```bash
+export NGC_API_KEY=
+export LOCAL_NIM_CACHE=~/.cache/nim
+mkdir -p "$LOCAL_NIM_CACHE"
+chmod -R a+w "$LOCAL_NIM_CACHE"
+docker run -it --rm \
+    --gpus all \
+    --ipc host \
+    --shm-size=32GB \
+    -e NGC_API_KEY \
+    -v "$LOCAL_NIM_CACHE:/opt/nim/.cache" \
+    -u $(id -u) \
+    -p 8000:8000 \
+    nvcr.io/nim/nvidia/cosmos3-reasoner:latest
+```
+
+## Step 3. Test the NIM
+
+You can now make a local API call using this curl command:
+
+```bash
+curl -X 'POST' \
+'http://127.0.0.1:8000/v1/chat/completions' \
+    -H 'Accept: application/json' \
+    -H 'Content-Type: application/json' \
+    -d '{
+        "model": "nvidia/cosmos3-nano-reasoner",
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant."
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url":
+                            {
+                                "url": "https://assets.ngc.nvidia.com/products/api-catalog/phi-3-5-vision/example1b.jpg"
+                            }
+                    },
+                    {
+                        "type": "text",
+                        "text": "What is in this image?"
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 256,
+        "stream": false
+    }'
+```
+
+For more details on getting started with this NIM, visit the [NVIDIA NIM Docs](https://docs.nvidia.com/nim/vision-language-models/latest/introduction.html).
+5c:T397e,
+
+# NVIDIA Cosmos
+
+Cosmos is NVIDIA’s World Foundation Model Development Platform that provides the tools to either finetune existing models or train new models from scratch.
+
+## Cosmos Model Family
+
+Cosmos World Foundation Models (WFM) are a family of highly-performant pre-trained models purpose-built for generating physics-aware videos used for training robots. With Cosmos, developers can simulate a world in which robots function and train them to act and react responsibly in the real world before actual deployment.
+
+Cosmos WFMs currently contain four main types of models: NeMo Curator, Cosmos Tokenizer, Cosmos Guardrail, and Cosmos World Foundation Model. NeMo Curator is a video curation pipeline that takes raw video frames, splits them into meaningful segments, and annotates them with semantic tags, object labels, and scene descriptions. The annotated images are then fed into the Cosmos Tokenizer, which produces a sequence of tokens. This step reduces data dimensionality enabling Cosmos World Foundation Model to effectively handle large or complex inputs for training. Cosmos WFM then consumes the curated/annotated video segments and learns the underlying physics and visual dynamics from real world data. When queried, Cosmos WFM outputs new token sequences that are then decoded back into high-resolution and physically realistic synthetic videos. Cosmos WFMs are pretrained on large-scale video datasets to expose them to a broad range of visual experiences, enabling them to serve as generalists. To construct a specialized WFM developers are expected to fine-tune Cosmos WFM using additional data collected from a specific use case. This additional data will help adapt Cosmos WFM to this intended use case, ensuring it can perform optimally under real-world conditions.
+
+## Governing Terms/Terms of Use
+
+All Cosmos WFMs are deployed globally and are covered under NVIDIA’s [Open Model License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/). This license agreement confirms that:
+
+* Models are commercially usable.
+* You are free to create and distribute derivative models.
+* NVIDIA does not claim ownership of any outputs generated using the models or derivative models.
+
+If users bypass, disable, reduce the efficacy of, or circumvent any technical limitation, safety guardrail or associated safety guardrail hyperparameter, encryption, security, digital rights management, or authentication mechanism contained in the Model, the user’s rights under the NVIDIA Open Model License Agreement will automatically terminate. If users are interested in a custom license, they may contact cosmos-license@nvidia.com.
+
+## Specific Risk Areas and Mitigations
+
+WFMs can produce unrealistic outputs, generate unsafe content or may inadvertently amplify societal biases reflected in their training data. Collectively, these risks underscore the need for technical measures to mitigate risk and careful evaluation before leveraging Cosmos WFM in real-world applications.
+
+### **Cosmos Guardrail**
+
+
+For the safe use of our world foundation models, we develop a comprehensive guardrail system. Cosmos Guardrail consists of two stages: the pre-Guard and the post-Guard stage. The pre-Guard stage leverages [Aegis-AI-Content-Safety-LlamaGuard-LLM-Defensive-1.0](https://huggingface.co/nvidia/Aegis-AI-Content-Safety-LlamaGuard-Defensive-1.0), which is a fine-tuned version of [Llama-Guard](https://ai.meta.com/research/publications/llama-guard-llm-based-input-output-safeguard-for-human-ai-conversations/) trained on [NVIDIA’s Aegis Content Safety Dataset](https://

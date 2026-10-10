@@ -1,0 +1,101 @@
+cosmos3-nano-reasoner Model by NVIDIA | NVIDIA NIM
+Skip to main content
+Search
+⌘K
+Ctrl+K
+Login
+NVIDIA
+cosmos3-nano-reasoner
+Downloadable
+Free Endpoint
+Vision language model that excels in understanding the physical world using structured reasoning on videos or images.
+Physical AI
+autonomous vehicles
+industrial
+reasoning
+robotics
+smart cities
+Synthetic Data Generation
+video understanding
+vision language model
+Download Now
+Experience
+Experience
+Model Card
+Model Card
+Deploy
+Deploy
+System Card
+System Card
+Accelerated by DGX Cloud
+Input
+View Examples
+Input
+Drop files here
+.mp4, .jpg, .jpeg, .png
+.
+mp4
+.
+jpg
+.
+jpeg
+.
+png
+User Prompt
+Your question or task. Aim for up to 400 tokens (300 words); max 1000 tokens. Model can accommodate reasoning or non-reasoning answers. Enable reasoning by including this text string in the user prompt: Answer the question using the following format:
+<think>
+Your reasoning.
+</think>
+ Write your final answer immediately after the 
+</think>
+ tag
+Your question or task. Aim for up to 400 tokens (300 words); max 1000 tokens. Model can accommodate reasoning or non-reasoning answers. Enable reasoning by including this text string in the user prompt: Answer the question using the following format:
+<think>
+Your reasoning.
+</think>
+ Write your final answer immediately after the 
+</think>
+ tag
+0/4000
+System Prompt
+Defines AI role/rules for session. Max 250 tokens.
+Defines AI role/rules for session. Max 250 tokens.
+0/250
+Using free API
+for development
+Free APIs for development
+Your API requests may be rate limited. Traffic from other users may cause throttling.
+Upgrade
+Get API Key
+Copied
+Copy
+Reset
+Run
+Output
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+Search
+⌘K
+Ctrl+K
+?
+Login
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+?
+Terms of Use
+Privacy Policy
+Your Privacy Choices
+Contact
+Copyright © 
+2026
+ NVIDIA Corporation

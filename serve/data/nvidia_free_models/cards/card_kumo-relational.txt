@@ -1,0 +1,444 @@
+# Model Overview
+
+## Description
+NVIDIA Kumo Relational is a structured-data foundation model for prediction over relational, multi-table data. It uses declared schemas, relationships, entity tables, fact tables, context rows, and prediction rows without requiring callers to flatten connected tables into a single feature table.
+
+The NVIDIA Kumo Relational Inference Microservice (NIM), release 1.0.0, accepts JSON arrays-format relational payloads through a structured-data API, validates the task, schema, context, and prediction contract, and invokes the Kumo Relational driver for synchronous inference.
+
+This model is ready for commercial or non-commercial use.
+
+## License and Terms of Use:
+**GOVERNING TERMS:** The NIM container is governed by the [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) and the [Product-Specific Terms for NVIDIA AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/); and the use of the model is governed by the [NVIDIA Open Model License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/).
+
+## Deployment Geography:
+Global
+
+## Use Case:
+**Use Case:** NVIDIA Kumo Relational is designed for binary classification, multiclass classification, regression, forecasting, and temporal link prediction over structured relational data. It supports one-shot prediction and session-based workflows that reuse the same model, task, schema, and context across prediction requests.
+
+## Release Date:
+**NGC:** 08/18/2026 via `nvcr.io/nim/nvidia/kumo-relational:1.0.0`
+**Source announcement:** 04/14/2025 via [KumoRFM-2: Scaling Foundation Models for Relational Learning](https://arxiv.org/abs/2604.12596)
+
+## Reference(s):
+**References:**
+- [KumoRFM whitepaper](https://arxiv.org/abs/2604.12596)
+
+## Model Architecture:
+**Architecture Type:** Transformer
+**Network Architecture:** NVIDIA Kumo Relational 1.0.0 uses a table-invariant row encoder and exchanges information across connected tables and context labels with a Relational Graph Transformer.
+**Total Parameters:** 3.1*10^7
+
+### Input:
+**Input Types:** Tabular
+**Input Formats:** JSON arrays-format relational tables
+**Input Parameters:** One Dimensional (1D)
+**Other Properties Related to Input:** Requests declare an instance table, optional related tables, relationships, task metadata, labeled context rows, and prediction rows. Binary classification, multiclass classification, regression, and forecasting require exactly one entity table. Temporal link prediction requires source and target entity tables.
+
+### Output:
+**Output Types:** Tabular
+**Output Format:** JSON prediction results
+**Output Parameters:** One Dimensional (1D)
+**Other Properties Related to Output:** Task-dependent outputs include predictions, probabilities, scores, rankings, quantiles, embeddings, and single-row diagnostic explanations.
+
+__Our AI models are designed and/or optimized to run on NVIDIA GPU-accelerated systems. By leveraging NVIDIA's hardware (e.g. GPU cores) and software frameworks (e.g., CUDA libraries), the model achieves faster training and inference times compared to CPU-only solutions.__
+
+## Software Integration:
+**Runtime Engines:**
+Kumo Relational driver, release 1.0.0
+
+**Supported Hardware Microarchitecture Compatibility:**
+- NVIDIA A10G Tensor Core GPU
+- NVIDIA H100 Tensor Core GPU
+- NVIDIA L4 Tensor Core GPU
+- NVIDIA L40S GPU
+
+**Supported Operating System:** Linux
+
+__The integration of foundation and fine-tuned models into AI systems requires additional testing using use-case-specific data to ensure safe and effective deployment. Following the V-model methodology, iterative testing and validation at both unit and system levels are essential to mitigate risks, meet technical and functional requirements, and ensure compliance with safety and ethical standards before deployment.__
+
+## Model Version(s)
+1.0.0
+
+## Training, Testing, and Evaluation Datasets:
+
+### Training Dataset
+**Data Modality:** Tabular
+**Training Data Size:** 38 million tables across 6.4 million graphs
+**Data Collection Method by dataset:** [Hybrid: Automated, Synthetic]
+**Labeling Method by dataset:** [Automated]
+**Properties:** Kumo Relational was pretrained on synthetic tabular and relational data. Linguistic characteristics are not applicable for tabular data.
+
+### Testing Dataset
+**Data Collection Method by dataset:** [Hybrid: Automated, Manually-Collected]
+**Labeling Method by dataset:** [Hybrid: Automated, Manually-Labeled]
+**Properties:** Release testing uses real-world tabular and relational benchmark data. The combined testing and evaluation data includes approximately 100 tables and 2 billion rows across 15 graphs. Linguistic characteristics are not applicable for tabular data.
+
+### Evaluation Dataset
+**Evaluation Benchmark Score:** Undisclosed
+**Data Collection Method by dataset:** [Hybrid: Automated, Manually-Collected]
+**Labeling Method by dataset:** [Hybrid: Automated, Manually-Labeled]
+**Properties:** Evaluation uses real-world tabular and relational benchmark data. The combined testing and evaluation data includes approximately 100 tables and 2 billion rows across 15 graphs. Linguistic characteristics are not applicable for tabular data. Kumo Relational was not trained or tuned on these datasets or tasks.
+
+## Inference
+**Acceleration Engine:** Kumo Relational driver, release 1.0.0
+**Supported Tasks:** Binary classification, multiclass classification, regression, forecasting, and temporal link prediction
+**API Endpoints:** `POST /v1/predictions`, `POST /v1/sessions`, `POST /v1/sessions/{session_id}/predictions`, and `DELETE /v1/sessions/{session_id}`
+**Test Hardware:**
+- NVIDIA A10G Tensor Core GPU
+- NVIDIA H100 Tensor Core GPU
+- NVIDIA L4 Tensor Core GPU
+- NVIDIA L40S GPU
+
+## Ethical Considerations
+NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. Developers should work with their internal developer team to ensure these software components meet requirements for the relevant industry and use case and address unforeseen product misuse.
+
+Users are responsible for model inputs and outputs. Users are responsible for ensuring safe integration of this model, including implementing guardrails as well as other safety mechanisms, prior to deployment.
+
+Please report model quality, risk, security vulnerabilities or NVIDIA AI Concerns [here](https://www.nvidia.com/en-us/support/submit-security-vulnerability/).53:T871,| Field | Response |
+| :---- | :---- |
+| Intended Task/Domain: | Binary classification, multiclass classification, regression, forecasting, and temporal link prediction over relational, multi-table structured data. |
+| Model Type: | Transformer-based relational foundation model. |
+| Intended Users: | Developers and data scientists building structured-data prediction applications. |
+| Output: | Task-dependent predictions, probabilities, scores, rankings, quantiles, embeddings, and single-row diagnostic explanations. |
+| Describe how the model works: | NVIDIA Kumo Relational 1.0.0 encodes rows with a table-invariant row encoder and exchanges information across related tables and context labels with a Relational Graph Transformer. |
+| Name the adversely impacted groups this has been tested to deliver comparable outcomes regardless of: | No protected-class parity evaluation was reported. |
+| Technical Limitations \u0026 Mitigation: | Performance depends on the declared schema, relationships, context examples, and data used in the deployment. Validate the model on data representative of your specific use case before deployment. |
+| Verified to have met prescribed NVIDIA quality standards: | Yes |
+| Performance Metrics: | Refer to the [KumoRFM whitepaper](https://arxiv.org/abs/2604.12596) for published benchmark metrics across 30 predictive tasks from seven public RelBench datasets. |
+| Potential Known Risks: | Incorrect schemas, relationships, context labels, or nonrepresentative data can produce inaccurate predictions. Do not use outputs without use-case-specific validation and appropriate human oversight. |
+| Licensing | **GOVERNING TERMS:** The NIM container is governed by the [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) and the [Product-Specific Terms for NVIDIA AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/); and the use of the model is governed by the [NVIDIA Open Model License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/). |54:Tfbc,import json
+
+import requests
+
+
+payload = {
+    "model": "kumo-relational",
+    "task": {
+        "kind": "binary_classification",
+        "target": {
+            "column_name": "label",
+            "dtype": "bool",
+            "classes": ["false", "true"],
+            "positive_class": "true",
+        },
+        "entity_table_names": ["accounts"],
+        "anchor_time_column": "anchor_time",
+    },
+    "schema": {
+        "instance_table": {
+            "columns": {
+                "instance_id": {
+                    "dtype": "int64",
+                    "stype": "ID",
+                    "nullable": False,
+                },
+                "anchor_time": {
+                    "dtype": "timestamp[us]",
+                    "stype": "timestamp",
+                    "nullable": False,
+                },
+                "account_id": {
+                    "dtype": "int64",
+                    "stype": "ID",
+                    "nullable": False,
+                },
+                "label": {
+                    "dtype": "bool",
+                    "stype": "categorical",
+                },
+            },
+            "primary_key": "instance_id",
+        },
+        "related_tables": {
+            "accounts": {
+                "columns": {
+                    "instance_id": {
+                        "dtype": "int64",
+                        "stype": "ID",
+                        "nullable": False,
+                    },
+                    "account_id": {
+                        "dtype": "int64",
+                        "stype": "ID",
+                        "nullable": False,
+                    },
+                    "amount": {
+                        "dtype": "float64",
+                        "stype": "numerical",
+                    },
+                    "segment": {
+                        "dtype": "string",
+                        "stype": "categorical",
+                    },
+                },
+                "primary_key": ["instance_id", "account_id"],
+            }
+        },
+        "relationships": [
+            {
+                "source_columns": ["instance_id", "account_id"],
+                "target_table": "accounts",
+                "target_columns": ["instance_id", "account_id"],
+            }
+        ],
+    },
+    "context": {
+        "instance_table": {
+            "format": "arrays",
+            "columns": ["instance_id", "anchor_time", "account_id", "label"],
+            "rows": [
+                [0, "2025-01-01T00:00:00Z", 100, False],
+                [1, "2025-01-01T00:00:00Z", 101, True],
+                [2, "2025-01-02T00:00:00Z", 102, False],
+                [3, "2025-01-02T00:00:00Z", 103, True],
+            ],
+        },
+        "related_tables": {
+            "accounts": {
+                "format": "arrays",
+                "columns": ["instance_id", "account_id", "amount", "segment"],
+                "rows": [
+                    [0, 100, 10.5, "small"],
+                    [1, 101, 250.0, "enterprise"],
+                    [2, 102, 12.0, "small"],
+                    [3, 103, 300.0, "enterprise"],
+                ],
+            }
+        },
+    },
+    "predict": {
+        "instance_table": {
+            "format": "arrays",
+            "columns": ["instance_id", "anchor_time", "account_id"],
+            "rows": [[4, "2025-02-01T00:00:00Z", 104]],
+        },
+        "related_tables": {
+            "accounts": {
+                "format": "arrays",
+                "columns": ["instance_id", "account_id", "amount", "segment"],
+                "rows": [[4, 104, 275.0, "enterprise"]],
+            }
+        },
+    },
+    "output": {"fields": ["prediction", "probabilities"]},
+}
+
+response = requests.post(
+    "https://ai.api.nvidia.com/v1/structured-data/nvidia/kumo-relational/predictions",
+    headers={
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $NVIDIA_API_KEY",
+    },
+    json=payload,
+)
+response.raise_for_status()
+
+print(json.dumps(response.json(), indent=2))
+55:Tde5,async function main() {
+  const payload = {
+    model: "kumo-relational",
+    task: {
+      kind: "binary_classification",
+      target: {
+        column_name: "label",
+        dtype: "bool",
+        classes: ["false", "true"],
+        positive_class: "true",
+      },
+      entity_table_names: ["accounts"],
+      anchor_time_column: "anchor_time",
+    },
+    schema: {
+      instance_table: {
+        columns: {
+          instance_id: {
+            dtype: "int64",
+            stype: "ID",
+            nullable: false,
+          },
+          anchor_time: {
+            dtype: "timestamp[us]",
+            stype: "timestamp",
+            nullable: false,
+          },
+          account_id: {
+            dtype: "int64",
+            stype: "ID",
+            nullable: false,
+          },
+          label: {
+            dtype: "bool",
+            stype: "categorical",
+          },
+        },
+        primary_key: "instance_id",
+      },
+      related_tables: {
+        accounts: {
+          columns: {
+            instance_id: {
+              dtype: "int64",
+              stype: "ID",
+              nullable: false,
+            },
+            account_id: {
+              dtype: "int64",
+              stype: "ID",
+              nullable: false,
+            },
+            amount: {
+              dtype: "float64",
+              stype: "numerical",
+            },
+            segment: {
+              dtype: "string",
+              stype: "categorical",
+            },
+          },
+          primary_key: ["instance_id", "account_id"],
+        },
+      },
+      relationships: [
+        {
+          source_columns: ["instance_id", "account_id"],
+          target_table: "accounts",
+          target_columns: ["instance_id", "account_id"],
+        },
+      ],
+    },
+    context: {
+      instance_table: {
+        format: "arrays",
+        columns: ["instance_id", "anchor_time", "account_id", "label"],
+        rows: [
+          [0, "2025-01-01T00:00:00Z", 100, false],
+          [1, "2025-01-01T00:00:00Z", 101, true],
+          [2, "2025-01-02T00:00:00Z", 102, false],
+          [3, "2025-01-02T00:00:00Z", 103, true],
+        ],
+      },
+      related_tables: {
+        accounts: {
+          format: "arrays",
+          columns: ["instance_id", "account_id", "amount", "segment"],
+          rows: [
+            [0, 100, 10.5, "small"],
+            [1, 101, 250.0, "enterprise"],
+            [2, 102, 12.0, "small"],
+            [3, 103, 300.0, "enterprise"],
+          ],
+        },
+      },
+    },
+    predict: {
+      instance_table: {
+        format: "arrays",
+        columns: ["instance_id", "anchor_time", "account_id"],
+        rows: [[4, "2025-02-01T00:00:00Z", 104]],
+      },
+      related_tables: {
+        accounts: {
+          format: "arrays",
+          columns: ["instance_id", "account_id", "amount", "segment"],
+          rows: [[4, 104, 275.0, "enterprise"]],
+        },
+      },
+    },
+    output: {
+      fields: ["prediction", "probabilities"],
+    },
+  };
+
+  const response = await fetch(
+    "https://ai.api.nvidia.com/v1/structured-data/nvidia/kumo-relational/predictions",
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: "Bearer $NVIDIA_API_KEY",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Request failed: ${response.status} ${await response.text()}`,
+    );
+  }
+
+  const result = await response.json();
+  console.log(JSON.stringify(result, null, 2));
+}
+
+main();
+56:Tb03,curl "https://ai.api.nvidia.com/v1/structured-data/nvidia/kumo-relational/predictions" \
+  -H "Authorization: Bearer $NVIDIA_API_KEY" \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "kumo-relational",
+    "task": {
+      "kind": "binary_classification",
+      "target": {"column_name": "label", "dtype": "bool", "classes": ["false", "true"], "positive_class": "true"},
+      "entity_table_names": ["accounts"],
+      "anchor_time_column": "anchor_time"
+    },
+    "schema": {
+      "instance_table": {
+        "columns": {
+          "instance_id": {"dtype": "int64", "stype": "ID", "nullable": false},
+          "anchor_time": {"dtype": "timestamp[us]", "stype": "timestamp", "nullable": false},
+          "account_id": {"dtype": "int64", "stype": "ID", "nullable": false},
+          "label": {"dtype": "bool", "stype": "categorical"}
+        },
+        "primary_key": "instance_id"
+      },
+      "related_tables": {
+        "accounts": {
+          "columns": {
+            "instance_id": {"dtype": "int64", "stype": "ID", "nullable": false},
+            "account_id": {"dtype": "int64", "stype": "ID", "nullable": false},
+            "amount": {"dtype": "float64", "stype": "numerical"},
+            "segment": {"dtype": "string", "stype": "categorical"}
+          },
+          "primary_key": ["instance_id", "account_id"]
+        }
+      },
+      "relationships": [{
+        "source_columns": ["instance_id", "account_id"],
+        "target_table": "accounts",
+        "target_columns": ["instance_id", "account_id"]
+      }]
+    },
+    "context": {
+      "instance_table": {
+        "format": "arrays",
+        "columns": ["instance_id", "anchor_time", "account_id", "label"],
+        "rows": [
+          [0, "2025-01-01T00:00:00Z", 100, false],
+          [1, "2025-01-01T00:00:00Z", 101, true],
+          [2, "2025-01-02T00:00:00Z", 102, false],
+          [3, "2025-01-02T00:00:00Z", 103, true]
+        ]
+      },
+      "related_tables": {
+        "accounts": {
+          "format": "arrays",
+          "columns": ["instance_id", "account_id", "amount", "segment"],
+          "rows": [
+            [0, 100, 10.5, "small"],
+            [1, 101, 250.0, "enterprise"],
+            [2, 102, 12.0, "small"],
+            [3, 103, 300.0, "enterprise"]
+          ]
+        }
+      }
+    },
+    "predict": {
+      "instance_table": {
+        "format": "arrays",
+        "columns": ["instance_id", "anchor_time", "account_

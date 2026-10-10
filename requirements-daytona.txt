@@ -1,0 +1,12 @@
+# The cross-toolchain harness: tools/daytona_bridge_test.py runs the frozen C boundary
+# against a sandbox that shares nothing with this machine.
+#
+# This is deliberately separate from requirements.txt. requirements.txt is what setup.py
+# installs into .venv for the engine; nothing in the engine imports daytona. Installing
+# the SDK into .venv would pull 99 MB of API clients into the runtime for a job that
+# only runs in CI.
+#
+#   python3 -m venv .venv_daytona
+#   .venv_daytona/bin/pip install -r requirements-daytona.txt
+#   DAYTONA_API_KEY=... .venv_daytona/bin/python tools/daytona_bridge_test.py
+daytona==0.223.1

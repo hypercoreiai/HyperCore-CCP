@@ -1,0 +1,1168 @@
+Kumo Relational Model by NVIDIA | NVIDIA NIM
+Skip to main content
+Search
+⌘K
+Ctrl+K
+Login
+nvidia
+/
+Kumo Relational
+Build
+Build
+Playground
+Playground
+Model Card
+Model Card
+API Reference
+Prototype
+Start building with a free API endpoint.
+Python
+Node
+Shell
+Generate API Key
+Copied
+Copy
+import
+ json
+import
+ requests
+payload 
+=
+{
+"model"
+:
+"kumo-relational"
+,
+"task"
+:
+{
+"kind"
+:
+"binary_classification"
+,
+"target"
+:
+{
+"column_name"
+:
+"label"
+,
+"dtype"
+:
+"bool"
+,
+"classes"
+:
+[
+"false"
+,
+"true"
+]
+,
+"positive_class"
+:
+"true"
+,
+}
+,
+"entity_table_names"
+:
+[
+"accounts"
+]
+,
+"anchor_time_column"
+:
+"anchor_time"
+,
+}
+,
+"schema"
+:
+{
+"instance_table"
+:
+{
+"columns"
+:
+{
+"instance_id"
+:
+{
+"dtype"
+:
+"int64"
+,
+"stype"
+:
+"ID"
+,
+"nullable"
+:
+False
+,
+}
+,
+"anchor_time"
+:
+{
+"dtype"
+:
+"timestamp[us]"
+,
+"stype"
+:
+"timestamp"
+,
+"nullable"
+:
+False
+,
+}
+,
+"account_id"
+:
+{
+"dtype"
+:
+"int64"
+,
+"stype"
+:
+"ID"
+,
+"nullable"
+:
+False
+,
+}
+,
+"label"
+:
+{
+"dtype"
+:
+"bool"
+,
+"stype"
+:
+"categorical"
+,
+}
+,
+}
+,
+"primary_key"
+:
+"instance_id"
+,
+}
+,
+"related_tables"
+:
+{
+"accounts"
+:
+{
+"columns"
+:
+{
+"instance_id"
+:
+{
+"dtype"
+:
+"int64"
+,
+"stype"
+:
+"ID"
+,
+"nullable"
+:
+False
+,
+}
+,
+"account_id"
+:
+{
+"dtype"
+:
+"int64"
+,
+"stype"
+:
+"ID"
+,
+"nullable"
+:
+False
+,
+}
+,
+"amount"
+:
+{
+"dtype"
+:
+"float64"
+,
+"stype"
+:
+"numerical"
+,
+}
+,
+"segment"
+:
+{
+"dtype"
+:
+"string"
+,
+"stype"
+:
+"categorical"
+,
+}
+,
+}
+,
+"primary_key"
+:
+[
+"instance_id"
+,
+"account_id"
+]
+,
+}
+}
+,
+"relationships"
+:
+[
+{
+"source_columns"
+:
+[
+"instance_id"
+,
+"account_id"
+]
+,
+"target_table"
+:
+"accounts"
+,
+"target_columns"
+:
+[
+"instance_id"
+,
+"account_id"
+]
+,
+}
+]
+,
+}
+,
+"context"
+:
+{
+"instance_table"
+:
+{
+"format"
+:
+"arrays"
+,
+"columns"
+:
+[
+"instance_id"
+,
+"anchor_time"
+,
+"account_id"
+,
+"label"
+]
+,
+"rows"
+:
+[
+[
+0
+,
+"2025-01-01T00:00:00Z"
+,
+100
+,
+False
+]
+,
+[
+1
+,
+"2025-01-01T00:00:00Z"
+,
+101
+,
+True
+]
+,
+[
+2
+,
+"2025-01-02T00:00:00Z"
+,
+102
+,
+False
+]
+,
+[
+3
+,
+"2025-01-02T00:00:00Z"
+,
+103
+,
+True
+]
+,
+]
+,
+}
+,
+"related_tables"
+:
+{
+"accounts"
+:
+{
+"format"
+:
+"arrays"
+,
+"columns"
+:
+[
+"instance_id"
+,
+"account_id"
+,
+"amount"
+,
+"segment"
+]
+,
+"rows"
+:
+[
+[
+0
+,
+100
+,
+10.5
+,
+"small"
+]
+,
+[
+1
+,
+101
+,
+250.0
+,
+"enterprise"
+]
+,
+[
+2
+,
+102
+,
+12.0
+,
+"small"
+]
+,
+[
+3
+,
+103
+,
+300.0
+,
+"enterprise"
+]
+,
+]
+,
+}
+}
+,
+}
+,
+"predict"
+:
+{
+"instance_table"
+:
+{
+"format"
+:
+"arrays"
+,
+"columns"
+:
+[
+"instance_id"
+,
+"anchor_time"
+,
+"account_id"
+]
+,
+"rows"
+:
+[
+[
+4
+,
+"2025-02-01T00:00:00Z"
+,
+104
+]
+]
+,
+}
+,
+"related_tables"
+:
+{
+"accounts"
+:
+{
+"format"
+:
+"arrays"
+,
+"columns"
+:
+[
+"instance_id"
+,
+"account_id"
+,
+"amount"
+,
+"segment"
+]
+,
+"rows"
+:
+[
+[
+4
+,
+104
+,
+275.0
+,
+"enterprise"
+]
+]
+,
+}
+}
+,
+}
+,
+"output"
+:
+{
+"fields"
+:
+[
+"prediction"
+,
+"probabilities"
+]
+}
+,
+}
+response 
+=
+ requests
+.
+post
+(
+"https://ai.api.nvidia.com/v1/structured-data/nvidia/kumo-relational/predictions"
+,
+ headers
+=
+{
+"Accept"
+:
+"application/json"
+,
+"Content-Type"
+:
+"application/json"
+,
+"Authorization"
+:
+"Bearer $NVIDIA_API_KEY"
+,
+}
+,
+ json
+=
+payload
+,
+)
+response
+.
+raise_for_status
+(
+)
+print
+(
+json
+.
+dumps
+(
+response
+.
+json
+(
+)
+,
+ indent
+=
+2
+)
+)
+Deploy
+Ready to scale? Choose your deployment path.
+Select your target environment
+Linux with Docker
+Linux with Docker
+Deploying your application in production? Get started with a 90-day evaluation of NVIDIA AI Enterprise
+Get NVIDIA AI Enterprise
+Follow the steps below to download and run the NVIDIA NIM inference microservice for this model on your infrastructure of choice.
+Step 
+1
+Generate API Key
+Get API Key
+Step 
+2
+Pull and Run the NIM
+Bash
+Copied
+Copy
+$ 
+docker
+ login nvcr.io
+Username: 
+$oauthtoken
+Password: 
+<
+PASTE_API_KEY_HERE
+>
+Pull and run the NVIDIA NIM with the command below. The container serves the single packaged 
+kumo-relational
+ model; no external model mount or runtime model download is required.
+Bash
+Copied
+Copy
+docker
+ run 
+-it
+--rm
+\
+--gpus
+ all 
+\
+ --shm-size
+=
+16GB 
+\
+-p
+8000
+:8000 
+\
+ nvcr.io/nim/nvidia/kumo-relational:1.0.0
+The NIM listens on internal port 
+8000
+ by default. Set 
+NIM_HTTP_API_PORT
+ only when intentionally changing the container listen port, and update the Docker port mapping to match.
+Step 
+3
+Test the NIM
+You can now make a local API call using this curl command:
+Bash
+Copied
+Copy
+cat
+>
+ /tmp/kumo-relational-request.json 
+<<
+'JSON'
+{
+ "model": "kumo-relational",
+ "task": {
+ "kind": "binary_classification",
+ "target": {
+ "column_name": "TARGET",
+ "dtype": "bool",
+ "classes": [
+ "false",
+ "true"
+ ],
+ "positive_class": "true"
+ },
+ "entity_table_names": [
+ "users"
+ ],
+ "anchor_time_column": "__kumo_anchor_time"
+ },
+ "schema": {
+ "instance_table": {
+ "columns": {
+ "instance_id": {
+ "dtype": "int64",
+ "stype": "ID",
+ "nullable": false
+ },
+ "__kumo_entity_ref_0": {
+ "dtype": "int64",
+ "stype": "ID"
+ },
+ "__kumo_anchor_time": {
+ "dtype": "timestamp[us]",
+ "stype": "timestamp",
+ "nullable": false
+ },
+ "TARGET": {
+ "dtype": "bool",
+ "stype": "categorical"
+ }
+ },
+ "primary_key": "instance_id"
+ },
+ "related_tables": {
+ "users": {
+ "columns": {
+ "instance_id": {
+ "dtype": "int64",
+ "stype": "ID",
+ "nullable": false
+ },
+ "age": {
+ "dtype": "int64",
+ "stype": "numerical"
+ },
+ "country": {
+ "dtype": "string",
+ "stype": "categorical"
+ },
+ "user_id": {
+ "dtype": "int64",
+ "nullable": false
+ },
+ "plan": {
+ "dtype": "string",
+ "stype": "categorical"
+ }
+ },
+ "primary_key": [
+ "instance_id",
+ "user_id"
+ ]
+ },
+ "orders": {
+ "columns": {
+ "instance_id": {
+ "dtype": "int64",
+ "stype": "ID",
+ "nullable": false
+ },
+ "__node_id": {
+ "dtype": "int64",
+ "stype": "ID",
+ "nullable": false
+ },
+ "amount": {
+ "dtype": "float64",
+ "stype": "numerical"
+ },
+ "order_date": {
+ "dtype": "timestamp[us]",
+ "stype": "timestamp"
+ },
+ "category": {
+ "dtype": "string",
+ "stype": "categorical"
+ },
+ "user_id": {
+ "dtype": "int64",
+ "stype": "ID"
+ }
+ },
+ "primary_key": [
+ "instance_id",
+ "__node_id"
+ ]
+ }
+ },
+ "relationships": [
+ {
+ "source_columns": [
+ "__kumo_entity_ref_0"
+ ],
+ "target_table": "users",
+ "target_columns": [
+ "user_id"
+ ]
+ },
+ {
+ "source_table": "orders",
+ "source_columns": [
+ "user_id"
+ ],
+ "target_table": "users",
+ "target_columns": [
+ "user_id"
+ ]
+ }
+ ]
+ },
+ "context": {
+ "instance_table": {
+ "format": "arrays",
+ "columns": [
+ "instance_id",
+ "__kumo_entity_ref_0",
+ "__kumo_anchor_time",
+ "TARGET"
+ ],
+ "rows": [
+ [
+ 0,
+ 3,
+ "2024-12-02T00:00:00.000000Z",
+ false
+ ],
+ [
+ 1,
+ 2,
+ "2024-12-02T00:00:00.000000Z",
+ false
+ ],
+ [
+ 2,
+ 1,
+ "2024-12-02T00:00:00.000000Z",
+ false
+ ],
+ [
+ 3,
+ 1,
+ "2024-11-02T00:00:00.000000Z",
+ true
+ ],
+ [
+ 4,
+ 3,
+ "2024-11-02T00:00:00.000000Z",
+ false
+ ],
+ [
+ 5,
+ 2,
+ "2024-11-02T00:00:00.000000Z",
+ false
+ ],
+ [
+ 6,
+ 2,
+ "2024-10-03T00:00:00.000000Z",
+ true
+ ],
+ [
+ 7,
+ 3,
+ "2024-10-03T00:00:00.000000Z",
+ true
+ ],
+ [
+ 8,
+ 1,
+ "2024-10-03T00:00:00.000000Z",
+ true
+ ]
+ ]
+ },
+ "related_tables": {
+ "users": {
+ "format": "arrays",
+ "columns": [
+ "instance_id",
+ "age",
+ "country",
+ "user_id",
+ "plan"
+ ],
+ "rows": [
+ [
+ 0,
+ 39,
+ "GB",
+ 3,
+ "free"
+ ],
+ [
+ 1,
+ 54,
+ "DE",
+ 2,
+ "enterprise"
+ ],
+ [
+ 2,
+ 24,
+ "US",
+ 1,
+ "pro"
+ ],
+ [
+ 3,
+ 24,
+ "US",
+ 1,
+ "pro"
+ ],
+ [
+ 4,
+ 39,
+ "GB",
+ 3,
+ "free"
+ ],
+ [
+ 5,
+ 54,
+ "DE",
+ 2,
+ "enterprise"
+ ],
+ [
+ 6,
+ 54,
+ "DE",
+ 2,
+ "enterprise"
+ ],
+ [
+ 7,
+ 39,
+ "GB",
+ 3,
+ "free"
+ ],
+ [
+ 8,
+ 24,
+ "US",
+ 1,
+ "pro"
+ ]
+ ]
+ },
+ "orders": {
+ "format": "arrays",
+ "columns": [
+ "instance_id",
+ "__node_id",
+ "amount",
+ "order_date",
+ "category",
+ "user_id"
+ ],
+ "rows": [
+ [
+ 0,
+ 0,
+ 52.69,
+ "2024-10-15T00:00:00.000000Z",
+ "electronics",
+ 3
+ ],
+ [
+ 1,
+ 1,
+ 91.86,
+ "2024-09-20T00:00:00.000000Z",
+ "toys",
+ 2
+ ],
+ [
+ 1,
+ 2,
+ 159.76,
+ "2024-11-01T00:00:00.000000Z",
+ "toys",
+ 2
+ ],
+ [
+ 2,
+ 3,
+ 95.5,
+ "2024-09-10T00:00:00.000000Z",
+ "books",
+ 1
+ ],
+ [
+ 2,
+ 4,
+ 162.75,
+ "2024-10-05T00:00:00.000000Z",
+ "electronics",
+ 1
+ ],
+ [
+ 2,
+ 5,
+ 113.64,
+ "2024-12-01T00:00:00.000000Z",
+ "food",
+ 1
+ ],
+ [
+ 3,
+ 6,
+ 95.5,
+ "2024-09-10T00:00:00.000000Z",
+ "books",
+ 1
+ ],
+ [
+ 3,
+ 7,
+ 162.75,
+ "2024-10-05T00:00:00.000000Z",
+ "electronics",
+ 1
+ ],
+ [
+ 4,
+ 8,
+ 52.69,
+ "2024-10-15T00:00:00.000000Z",
+ "electronics",
+ 3
+ ],
+ [
+ 5,
+ 9,
+ 91.86,
+ "2024-09-20T00:00:00.000000Z",
+ "toys",
+ 2
+ ],
+ [
+ 5,
+ 10,
+ 159.76,
+ "2024-11-01T00:00:00.000000Z",
+ "toys",
+ 2
+ ],
+ [
+ 6,
+ 11,
+ 91.86,
+ "2024-09-20T00:00:00.000000Z",
+ "toys",
+ 2
+ ],
+ [
+ 8,
+ 12,
+ 95.5,
+ "2024-09-10T00:00:00.000000Z",
+ "books",
+ 1
+ ]
+ ]
+ }
+ }
+ },
+ "predict": {
+ "instance_table": {
+ "format": "arrays",
+ "columns": [
+ "instance_id",
+ "__kumo_entity_ref_0",
+ "__kumo_anchor_time"
+ ],
+ "rows": [
+ [
+ 9,
+ 1,
+ "2025-01-01T00:00:00.000000Z"
+ ]
+ ]
+ },
+ "related_tables": {
+ "users": {
+ "format": "arrays",
+ "columns": [
+ "instance_id",
+ "age",
+ "country",
+ "user_id",
+ "plan"
+ ],
+ "rows": [
+ [
+ 9,
+ 24,
+ "US",
+ 1,
+ "pro"
+ ]
+ ]
+ },
+ "orders": {
+ "format": "arrays",
+ "columns": [
+ "instance_id",
+ "__node_id",
+ "amount",
+ "order_date",
+ "category",
+ "user_id"
+ ],
+ "rows": [
+ [
+ 9,
+ 13,
+ 95.5,
+ "2024-09-10T00:00:00.000000Z",
+ "books",
+ 1
+ ],
+ [
+ 9,
+ 14,
+ 162.75,
+ "2024-10-05T00:00:00.000000Z",
+ "electronics",
+ 1
+ ],
+ [
+ 9,
+ 15,
+ 113.64,
+ "2024-12-01T00:00:00.000000Z",
+ "food",
+ 1
+ ]
+ ]
+ }
+ }
+ },
+ "output": {
+ "fields": [
+ "prediction",
+ "probabilities"
+ ]
+ },
+ "inference": {
+ "run_mode": "fast",
+ "use_prediction_time": false,
+ "inference_config": {
+ "kind": "classification",
+ "num_estimators": 1,
+ "column_shuffle": false,
+ "category_shuffle": false,
+ "hop_shuffle": false,
+ "class_shuffle": false
+ }
+ },
+ "metadata": {
+ "request_id": "kumo-relational-catalog-demo-001",
+ "source_query": "PREDICT COUNT(orders.*, 0, 30, days) > 0 FOR users.user_id=1"
+ }
+}
+JSON
+curl
+-X
+'POST'
+\
+'http://127.0.0.1:8000/v1/predictions'
+\
+-H
+'accept: application/json'
+\
+-H
+'Content-Type: application/json'
+\
+--data-binary @/tmp/kumo-relational-request.json
+For more details on this NIM request format, see the API reference for 
+POST /v1/predictions
+.
+Specifications
+A relational foundation model for prediction over structured, multi-table data.
+Graph Learning
+Prediction
+Relational Models
+Structured Data
+Provider
+NVIDIA
+Last Modified
+23 days ago
+Model Availability
+Free Endpoint
+Available
+Partner Endpoint
+Not available
+Download Available
+Available
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+Search
+⌘K
+Ctrl+K
+?
+Login
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+?
+Terms of Use
+Privacy Policy
+Your Privacy Choices
+Contact
+Copyright © 
+2026
+ NVIDIA Corporation

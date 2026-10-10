@@ -1,0 +1,135 @@
+name: Boundary gates
+
+# Five blocking stages, in the order a failure should be found:
+#   1. the wire layout is self-consistent,
+#   2. the supervisor behaves against the wire,
+#   3. one backend repeats itself, and every backend answers the same request the same way,
+#   4. the hardware guard runs when the weights are actually present,
+#   5. the same contract holds on a toolchain that is not this one.
+# Stage 5 is the one that cannot be reproduced locally, so it is required, not optional.
+# It needs DAYTONA_API_KEY on the repository; without the secret it reports SKIP rather
+# than failing a build for something that has nothing to do with the code.
+# The same five stages, in the same order, can be replayed on a build host with ./install.sh.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  contract-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: The tooling the gates import
+        run: python3 -m pip install -r requirements.txt
+      - name: Build (CPU) - the ABI check target runs as a dependency of both artifacts
+        run: |
+          cmake -B build -DHYPERCORE_ENABLE_CUDA=OFF
+          cmake --build build --target hypercore_api hypercore-worker -j4
+      - name: Machine-readable contract report
+        run: python3 tools/check_abi_alignment.py --json
+      # The artifact's libc requirement is not the same contract as the byte offsets, so it
+      # gets its own test. Building hypercore-worker already runs the floor gate on the
+      # produced .so; this tests the reader that enforces it.
+      - name: Deployment floor gate (tool + artifact)
+        run: |
+          python3 -m unittest tools.test_glibc_floor
+          python3 tools/glibc_floor.py --require 2.39 build/libhypercore_api.so
+
+  supervisor-tests:
+    needs: contract-lock
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: The tooling the gates import
+        run: python3 -m pip install -r requirements.txt
+      - run: cmake -B build -DHYPERCORE_ENABLE_CUDA=OFF && cmake --build build --target hypercore-worker -j4
+      - name: Slot, cancel, recovery, config-form and stream-loop suites
+        run: python3 -m unittest serve.test_slots serve.test_control_cancel serve.test_fatal_recovery serve.test_config_forms serve.test_stream_loop serve.test_http_auth
+      # The integration guard runs the flood behind the API key, so the stage proves two
+      # things at once: the slot gate sheds and reclaims, and the stub enforces the same
+      # credential rule serve/server.py does (serve/http_auth.py is the shared function).
+      - name: Integration guard - stub HTTP, no GPU, no weights, key required
+        run: python3 tools/bench_flood.py --worker build/hypercore-worker --concurrency 12 --slots 4 --api-key ci-boundary-key
+
+  backend-parity:
+    needs: supervisor-tests
+    runs-on: ubuntu-latest
+    # The ABI gate proves the byte offsets match. This stage proves the behaviour matches:
+    # the same fixed request, sent to every backend that was built, must produce the same
+    # token stream and the same counters. A backend that cannot repeat itself cannot be
+    # benchmarked, so the determinism half runs even where no GPU exists.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: The tooling the gates import
+        run: python3 -m pip install -r requirements.txt
+      - name: Comparison rules
+        run: python3 -m unittest tools.test_backend_parity
+      - name: Determinism gate (CPU artifact, two runs, one request)
+        run: |
+          cmake -B build -DHYPERCORE_ENABLE_CUDA=OFF
+          cmake --build build --target hypercore-worker -j4
+          python3 tools/backend_parity.py --backend cpu --require cpu --repeat 2
+      # The cross-backend half only runs where a GPU artifact was actually built.
+      - name: Cross-backend parity (runs only when a CUDA artifact exists)
+        run: |
+          if [ -f build-cuda/hypercore-worker ]; then
+            python3 tools/backend_parity.py --backend cpu --backend cuda --require cpu,cuda
+          else
+            echo "no CUDA artifact on this runner - cross-backend parity is not claimed here"
+          fi
+
+  model-guard:
+    needs: supervisor-tests
+    runs-on: ubuntu-latest
+    # The hardware guard is opt-in by file presence, not by a flag someone has to
+    # remember. pack/ is gitignored, so on a fresh checkout this stage reports SKIP
+    # rather than pretending it measured something.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: The tooling the gates import
+        run: python3 -m pip install -r requirements.txt
+      - run: cmake -B build -DHYPERCORE_ENABLE_CUDA=OFF && cmake --build build --target hypercore-worker -j4
+      # bench_flood.py --model exits 2 when pack/full is not physically present.
+      # That is a skip, not a failure, so the stage is only entered when the pack exists.
+      - name: Hardware guard (runs only when pack/full is present)
+        run: |
+          if [ -d pack/full ] && [ -n "$(ls -A pack/full)" ]; then
+            python3 tools/bench_flood.py --worker build/hypercore-worker --model --concurrency 16 --slots 4
+          else
+            echo "no model pack in this checkout - hardware guard skipped by design"
+          fi
+
+  cross-toolchain:
+    needs: supervisor-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: The tooling the gates import
+        run: python3 -m pip install -r requirements.txt
+      - run: |
+          cmake -B build -DHYPERCORE_ENABLE_CUDA=OFF
+          cmake --build build --target hypercore_api hypercore_glibc_floor_check -j4
+      - name: Foreign gcc, foreign CPython, same .so
+        run: |
+          if [ -z "$DAYTONA_API_KEY" ]; then
+            echo "DAYTONA_API_KEY is not set on this repository: the cross-toolchain stage needs a sandbox."
+            echo "Add the secret to run it. The byte-offset and libc halves of the same contract ran above."
+            exit 0
+          fi
+          python3 -m venv .venv_daytona
+          .venv_daytona/bin/pip install -r requirements-daytona.txt
+          .venv_daytona/bin/python tools/daytona_bridge_test.py
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}

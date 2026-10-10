@@ -1,0 +1,109 @@
+Background Noise Removal Model by NVIDIA | NVIDIA NIM
+Skip to main content
+Search
+⌘K
+Ctrl+K
+Login
+NVIDIA
+Background Noise Removal
+Downloadable
+Free Endpoint
+Removes unwanted noises from audio improving speech intelligibility.
+communications
+denoising
+nvidia ai for media
+speech enhancement
+Get API Key
+Experience
+Experience
+Model Card
+Model Card
+Try API
+Try API
+Deploy
+Deploy
+API Reference
+API Reference
+Accelerated by DGX Cloud
+Input
+View Examples
+Record or Upload
+0:00
+Upload an audio file
+.
+wav
+Upload File
+Noise Configuration
+Add extra noise
+Select a noise
+Air Conditioning
+Typing
+Fan
+Air Conditioning
+Amount of noise
+Amount of Noise
+Number
+The amount of noise that needs to be added to the original audio
+Less Noisy
+More Noisy
+0:00
+BNR Effect Strength
+BNR Denoising Strength
+Percent
+Controls how strongly the BNR model is applied. 100% = full denoising. 0% = original noisy audio.
+0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1
+1
+Using free API
+for development
+Free APIs for development
+Your API requests may be rate limited. Traffic from other users may cause throttling.
+Upgrade
+Get API Key
+Copied
+Copy
+GOVERNING TERMS
+: This trial service is governed by the 
+NVIDIA API Trial Terms of Service
+. Use of this model is governed by the 
+NVIDIA Open Model License Agreement
+.
+Reset
+Run
+Output
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+Search
+⌘K
+Ctrl+K
+?
+Login
+Explore
+Models
+Skills
+Blueprints
+Playbooks
+GPUs
+Docs
+?
+Terms of Use
+Privacy Policy
+Your Privacy Choices
+Contact
+Copyright © 
+2026
+ NVIDIA Corporation
