@@ -97,6 +97,9 @@ serve/data/assist_calls.jsonl
 strata-chat-*.md
 docs/strata-chat-*.md
 *-chat-*.md
+# The per-transcript summaries tools/build_history.py writes under data/history/chats/
+# are part of the built index, not raw dumps, so the rule above must not swallow them.
+!data/history/chats/*-chat-*.md
 
 # Archived history of the pre-restart repository (see README, "History").
 project_history_*
