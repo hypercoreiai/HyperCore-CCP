@@ -128,3 +128,6 @@ htmlcov/
 # Local run scripts written by setup on this machine (same class as run-*.sh).
 /_hypercore_run-*.sh
 /run_hypercore_*.sh
+
+# Checkpoint helper: local tooling, not project source.
+/cp_blackbox.sh
