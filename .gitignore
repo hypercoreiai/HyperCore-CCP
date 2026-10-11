@@ -124,3 +124,7 @@ project_history_*
 *.nvprof
 .coverage
 htmlcov/
+
+# Local run scripts written by setup on this machine (same class as run-*.sh).
+/_hypercore_run-*.sh
+/run_hypercore_*.sh

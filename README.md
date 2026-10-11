@@ -15,8 +15,13 @@ Engine version **0.1.40** · CUDA, HIP (AMD), SYCL (Intel Arc) and CPU backends 
 ## Install
 
 ```sh
-./install.sh                 # detect the GPU, pick a model size, build, run
+./install.sh                 # build the engine and run every boundary gate
+./setup.sh                   # detect the GPU, pick a model size, start the server
 ```
+
+`./install.sh` is the build and the gates; `./setup.sh` is the one that asks about your
+card, downloads a model and opens the page. Later runs of `./setup.sh`, or the
+`run-<model>.sh` it writes, start the model directly.
 
 Step by step, on Windows and Linux, for NVIDIA, AMD and Intel cards:
 [docs/INSTALL.md](docs/INSTALL.md). If an AI coding assistant is doing the install for
@@ -36,6 +41,51 @@ you, hand it [docs/AI_SETUP.md](docs/AI_SETUP.md).
 Measured numbers for your card: [docs/DETAILS.md](docs/DETAILS.md#speed-measured). Older
 and experimental hardware: [docs/OLDER_GPUS.md](docs/OLDER_GPUS.md).
 
+## The web app
+
+The server serves its own front end: open the page the run script opens (the same port as
+the API), and `#monitor` for the dashboard. There is no separate app and nothing from a
+CDN — `serve/web/` is one page, its styles, an inline SVG sprite and the Outfit font
+(OFL), all same-origin.
+
+- **Chat** — streaming answers, the model's thinking shown as it is produced, tool calls
+  from the MCP servers you have switched on, and an agent-profile dropdown. The profiles
+  come from `prompt.json` beside the server or `prompts/prompt.json` (the one this repo
+  ships): adding a profile to that file adds a menu entry with nothing to change in the
+  page or the code. `{{current_date}}`, `{{current_year}}` and `{{current_month}}` are
+  filled from the server clock, so a profile never hard-codes a year that goes stale.
+- **Monitor** — context fill, experts in VRAM, system RAM, GPU temperature, the recent
+  requests (prompt, reused, output, tok/s, VRAM hit rate, duration), the conversation
+  cache, the MCP switches and the external-assistant log.
+
+What the front end reads, and what changed with it:
+
+- **The request table is populated.** The worker's terminal frame now carries the
+  expert-tier accounting the engine already computes — prompt tokens read, cache hits
+  and lookups, PCIe offloads, RAM and file blobs — and the caps reply carries the VRAM
+  tier (slots in use, slots sized for, cache MiB, free VRAM, how the host-side experts
+  are held, prompt chunk). A field the engine did not measure is sent as `0xFFFFFFFF`,
+  so a dashboard never shows a measured `0` for something that was simply not measured.
+  A worker built against the older 40-byte summary is still read: its timings come
+  through and its expert columns show as absent.
+- **Prefill is the engine's own rate** — prompt tokens read over the time it took to read
+  them — and the card says which request the number came from instead of implying it is
+  live.
+- **A long prompt is not called stalled.** The stream's silence wall is the supervisor's
+  own (`"engine_silence_s"`, 300 s by default; `0` waits as long as the request needs),
+  measured from the last frame. The 30 s the worker is given to answer a submit is not
+  borrowed for the stream, so a six-figure prompt that takes 31 s to read is not cut off
+  mid-prefill.
+- **The page carries the key its own server requires**, so an install set up with a
+  default key works without typing it into Settings. A key typed in Settings still wins,
+  and is kept in that browser only.
+- **Turn-tail check** (`--turn-tail-check`, or `"turn_tail_check": true` in the model's
+  config — on by default for anything `setup` writes): when a turn would end, the server
+  appends one short question asking the model to check its answer against the request. A
+  bare confirmation ends the turn; a "no", or the model going on with the work, keeps it
+  open, up to `"turn_tail_checks"` times. The question and the confirmation are never
+  shown to the client, and every round's tokens are counted in the request's usage.
+
 ## The black-box boundary
 
 Everything outside the engine talks through one C header,
@@ -53,15 +103,17 @@ python3 tools/check_abi_alignment.py     # header, worker and Python mirrors agr
 python3 tools/glibc_floor.py build/libhypercore_api.so
 ```
 
-The ABI is pinned: `hypercore_caps_t` 28 bytes, `hypercore_request_summary_t` 40 bytes,
-`hypercore_request_config_t` 28 bytes (`struct_size@0, temperature@4, top_p@8, top_k@12,
-max_new_tokens@16, pcie_frac@20, spec_min_p@24`). Every struct carries `struct_size` at
-offset 0 for forward compatibility.
+The ABI is pinned: `hypercore_request_config_t` 28 bytes (`struct_size@0, temperature@4,
+top_p@8, top_k@12, max_new_tokens@16, pcie_frac@20, spec_min_p@24`), `hypercore_caps_t`
+56 bytes (the 28-byte contract plus the expert tier), `hypercore_request_summary_t` 68
+bytes (the 40-byte prefix plus the per-request expert accounting). Every struct carries
+`struct_size` at offset 0: a reader takes the prefix it knows and discards the tail, so
+an appended field never breaks an older embedder - a removed one would.
 
 ## Technical accomplishments
 
 **Engine**
-- 248 C/C++/header files across `src/` and `include/`, with CUDA, HIP and SYCL backends
+- 304 C/C++/header files across `src/` and `include/`, with CUDA, HIP and SYCL backends
   chosen at configure time (`-DHYPERCORE_ENABLE_CUDA|HIP|SYCL`).
 - Backend-neutral public API: no CUDA, HIP or SYCL type crosses the boundary.
 - 47 C/C++/CUDA test files in `tests/` and `bench/`, including the boundary tests that
@@ -70,6 +122,9 @@ offset 0 for forward compatibility.
 **Interface**
 - OpenAI- and Anthropic-compatible HTTP API with streaming, cancellation, and a worker
   supervisor with slot admission and shed-at-gate backpressure.
+- A front end served by the server itself (`serve/web`, ~2,900 lines of HTML/CSS/JS):
+  chat, a Monitor that reads the engine's own request summary, agent profiles, MCP
+  switches. Same origin, no CDN, self-hosted font.
 - 8 MCP servers exposing 50 tools (browser, contracts, docs, home, hub, scrape,
   terminal, web), each contract-checked against the handler that implements it.
 

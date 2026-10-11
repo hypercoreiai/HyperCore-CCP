@@ -82,6 +82,15 @@ The prompt's top-k selection takes a wider kernel there, with the same ids. `HYP
 `--vision gpu` (or `--vision cpu`). Pictures that take several seconds (about 3 s at 300 image tokens on 8 cores, more with more tokens) are read by the encoder on the CPU; `--vision gpu`
 (NVIDIA, ~1.4 GB of VRAM) makes it 0.1-0.5 s.
 
+**"the vision encoder did not start ... cudaMalloc failed: out of memory".**
+The card the encoder was asked to use has no room left for it - usually because the engine is already holding it all.
+The server then runs the encoder on the CPU and carries on: pictures are slow (about 3-13 s) but they work. To keep
+it on the GPU, run setup again with `--vram-reserve-mib 1400` (what the encoder needs) or `--vision cpu`, or name a
+spare card with `vision.cuda_device` in the run config.
+Before 0.1.41 this failure came out as "the vision encoder did not start: [New LWP 12345]": llama.cpp's crash
+reporter forks gdb and writes its stack trace on the same stdout the server reads for READY, so the reason - on
+stderr, in the model's log - never reached the window.
+
 ## AMD cards
 
 **"No AMD GPU found (the amdgpu driver's KFD topology is empty)" on Linux.**

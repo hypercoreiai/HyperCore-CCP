@@ -358,7 +358,8 @@ class VramReserve(unittest.TestCase):
             p = Path(d) / "hypercore-q2_0.json"
             p.write_text(json.dumps({"args": ["--max-context", "8192", "--vram-reserve-mib", "2048"]}))
             self.assertEqual(setup.choices_from_config(p)["vram_reserve_mib"], 2048)
-            p.write_text(json.dumps({"args": ["--vision", "--vram-reserve-mib", "700"], "vision": {"gpu": True}}))
+            p.write_text(json.dumps({"args": ["--vision", "--vram-reserve-mib", str(setup.VISION["gpu"]["reserve_mib"])],
+                                     "vision": {"gpu": True}}))
             self.assertIsNone(setup.choices_from_config(p)["vram_reserve_mib"])   # the images' own reserve
             p.write_text(json.dumps({"args": ["--max-context", "8192"]}))
             self.assertIsNone(setup.choices_from_config(p)["vram_reserve_mib"])

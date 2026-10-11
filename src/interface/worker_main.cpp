@@ -26,6 +26,7 @@
 #include "hypercore/hypercore_api.h"
 
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -90,13 +91,19 @@ void ipc_stream_callback(const hypercore_output_chunk_t* chunk, void* user_data)
 
     if (chunk->summary) {
         /* Frozen wire layout. The payload is 4 bytes of prompt_reused followed by the
-         * 40-byte summary, written field by field. Nothing here reads a struct's memory
+         * 68-byte summary, written field by field. Nothing here reads a struct's memory
          * image: the byte offsets are stated literally, so a compiler, a different
          * toolchain, or a future field in the engine's internal summary cannot move a
-         * byte on the wire. The asserts below are the contract made executable. */
-        static constexpr size_t WIRE_SUMMARY_SIZE = 40;
+         * byte on the wire. The asserts below are the contract made executable.
+         *
+         * The first 40 bytes are the layout every reader since 0.1.30 knows; the 28 bytes
+         * after them are the expert-tier accounting the Monitor needs (#Monitor). A reader
+         * that only knows the prefix still gets a correct frame - it reads the prefix and
+         * discards the tail, which is the direction the forward-compatibility rule goes. */
+        static constexpr size_t WIRE_SUMMARY_SIZE = 68;
+        static constexpr size_t WIRE_SUMMARY_PREFIX = 40;
         static_assert(sizeof(hypercore_request_summary_t) == WIRE_SUMMARY_SIZE,
-                      "hypercore_request_summary_t is no longer 40 bytes packed");
+                      "hypercore_request_summary_t is no longer 68 bytes packed");
         static_assert(offsetof(hypercore_request_summary_t, struct_size) == 0, "offset");
         static_assert(offsetof(hypercore_request_summary_t, produced_tokens) == 4, "offset");
         static_assert(offsetof(hypercore_request_summary_t, prefill_ms) == 8, "offset");
@@ -106,6 +113,13 @@ void ipc_stream_callback(const hypercore_output_chunk_t* chunk, void* user_data)
         static_assert(offsetof(hypercore_request_summary_t, stop_reason) == 32, "offset");
         static_assert(offsetof(hypercore_request_summary_t, time_to_first_token_ms) == 36,
                       "byte 36 is the reserved TTFT slot; moving it breaks every reader");
+        static_assert(offsetof(hypercore_request_summary_t, cache_hits) == 40, "offset");
+        static_assert(offsetof(hypercore_request_summary_t, cache_lookups) == 44, "offset");
+        static_assert(offsetof(hypercore_request_summary_t, offloaded) == 48, "offset");
+        static_assert(offsetof(hypercore_request_summary_t, prompt_read) == 52, "offset");
+        static_assert(offsetof(hypercore_request_summary_t, ram_blobs) == 56, "offset");
+        static_assert(offsetof(hypercore_request_summary_t, file_blobs) == 60, "offset");
+        static_assert(offsetof(hypercore_request_summary_t, file_kb) == 64, "offset");
 
         uint8_t payload[4 + WIRE_SUMMARY_SIZE];
         memset(payload, 0, sizeof payload);
@@ -124,6 +138,14 @@ void ipc_stream_callback(const hypercore_output_chunk_t* chunk, void* user_data)
         memcpy(payload + 32, &s->drafts_offered, 4);
         memcpy(payload + 36, &wire_stop_reason, 4);
         memcpy(payload + 40, &wire_ttft_ms, 4);   /* byte 36-39 of the summary */
+        memcpy(payload + 44 + 0, &s->cache_hits, 4);
+        memcpy(payload + 44 + 4, &s->cache_lookups, 4);
+        memcpy(payload + 44 + 8, &s->offloaded, 4);
+        memcpy(payload + 44 + 12, &s->prompt_read, 4);
+        memcpy(payload + 44 + 16, &s->ram_blobs, 4);
+        memcpy(payload + 44 + 20, &s->file_blobs, 4);
+        memcpy(payload + 44 + 24, &s->file_kb, 4);
+        (void) WIRE_SUMMARY_PREFIX;   /* the prefix is the first 40 bytes of the summary above */
 
         send_frame(STREAM_TERMINAL, request_id, payload, sizeof payload);
     }
@@ -172,10 +194,16 @@ void handle_caps(const Header& h) {
     caps.struct_size = sizeof caps;
     hypercore_status_t st = hypercore_engine_get_caps(g_engine, &caps);
     int32_t status = static_cast<int32_t>(st);
-    /* backend, slots, max_context, pool_workers, status, instance_pcie_frac, instance_spec_min_p.
-       7 x 4 = 28 bytes. The floats are the resolved Level-1 baseline, so a calibration runner
-       can read the starting point of a sweep without submitting a probe request. */
-    uint8_t payload[28];
+    /* backend, slots, max_context, pool_workers, status, instance_pcie_frac, instance_spec_min_p,
+       then the expert tier: slots, slots_full, cache MiB, cache full MiB, free VRAM MiB, expert
+       source, prompt chunk. 7 x 4 = 28 bytes, then 7 x 4 = 28 more. The floats are the resolved
+       Level-1 baseline, so a calibration runner can read the starting point of a sweep without
+       submitting a probe request.
+
+       A reader that only knows the first 28 bytes reads those and ignores the tail; that is the
+       forward-compatibility rule of this header, and it is why the fields are appended rather
+       than inserted. */
+    uint8_t payload[56];
     memset(payload, 0, sizeof payload);
     memcpy(payload + 0,  &caps.backend_type,        4);
     memcpy(payload + 4,  &caps.max_batch_slots,     4);
@@ -184,6 +212,13 @@ void handle_caps(const Header& h) {
     memcpy(payload + 16, &status,                   4);
     memcpy(payload + 20, &caps.instance_pcie_frac,  4);
     memcpy(payload + 24, &caps.instance_spec_min_p, 4);
+    memcpy(payload + 28, &caps.expert_slots,            4);
+    memcpy(payload + 32, &caps.expert_slots_full,       4);
+    memcpy(payload + 36, &caps.expert_cache_mib,        4);
+    memcpy(payload + 40, &caps.expert_cache_full_mib,   4);
+    memcpy(payload + 44, &caps.vram_free_mib,           4);
+    memcpy(payload + 48, &caps.expert_source,           4);
+    memcpy(payload + 52, &caps.prompt_chunk,            4);
     send_frame(RESP_CAPS, h.request_id, payload, sizeof payload);
 }
 
@@ -254,10 +289,19 @@ int main(int argc, char** argv) {
         return 2;
     }
     strncpy(addr.sun_path, argv[1], sizeof addr.sun_path - 1);
-    unlink(argv[1]);
+
+    /* A socket name outlives the process that bound it, so the leftover file is the usual
+     * reason bind() answers EADDRINUSE. unlink() cannot clear a name this process does not
+     * own, and it cannot clear a directory. Saying which one it is turns "cannot bind" into
+     * something a reader can act on, instead of a path and a shrug. */
+    if (unlink(argv[1]) != 0 && errno != ENOENT) {
+        std::fprintf(stderr, "hypercore_worker: could not remove %s: %s\n",
+                     argv[1], strerror(errno));
+    }
 
     if (bind(listener, (struct sockaddr*)&addr, sizeof addr) != 0 || listen(listener, 1) != 0) {
-        std::fprintf(stderr, "hypercore_worker: cannot bind %s\n", argv[1]);
+        std::fprintf(stderr, "hypercore_worker: cannot bind %s: %s\n",
+                     argv[1], strerror(errno));
         close(listener);
         hypercore_engine_destroy(g_engine);
         return 1;

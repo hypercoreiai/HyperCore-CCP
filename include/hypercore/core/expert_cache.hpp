@@ -72,6 +72,30 @@ std::vector<std::pair<int32_t, int32_t>> rank_learned_profile(int64_t n_layers, 
 bool write_expert_profile(const std::string& path, int64_t n_layers, int64_t n_expert,
                           const std::vector<std::pair<int32_t, int32_t>>& ranked, std::string& err);
 
+/// #1: the order the host arena's registration slices should be page-locked in, hottest layer first.
+///
+/// The arena is registered slice by slice (one slice per layer) whenever the whole range cannot be registered -
+/// a cap (HYPERCORE_ARENA_PIN_GIB, multi-GPU under WDDM, remote experts) or a driver that refuses it. In arena
+/// order that pins layers 0..k: the FIRST layers, which on this workload are not the read ones. The routing
+/// profile knows which layers are routed, so ordering the pin by it puts the locked pages under the experts the
+/// run actually reads; the rest stays resident through the working-set lock.
+///
+/// `ranked` is `read_expert_profile`'s hottest-first pair list. A layer's weight is the sum of its experts'
+/// ranks; ties keep arena order, so a profile that says nothing about a layer leaves it where it was. An empty
+/// profile gives an empty order, and the caller registers in arena order exactly as before.
+///
+/// The order is returned only if it is worth having.  At every prefix length the heat-ordered prefix is
+/// compared with the arena prefix; if the best gain over all prefix lengths is under `PIN_ORDER_MIN_GAIN`
+/// (2% of the routed heat) the profile is flat, reordering changes which layers a capped pin covers by less
+/// than measurement noise, and an empty order is returned so the arena keeps its contiguous tail lock.
+/// Profiles from real MoE models on this node are flat: see the measured 1.6% in the implementation.
+/// #1: the smallest heat gain that makes reordering the pin worth it. Below it the profile is flat and the
+/// order is noise; see `hot_layer_order` for how the gain is measured.
+constexpr double PIN_ORDER_MIN_GAIN = 0.02;
+
+std::vector<uint64_t> hot_layer_order(const std::vector<std::pair<int32_t, int32_t>>& ranked,
+                                      int64_t n_layers, int64_t n_expert);
+
 /// Free device memory for the expert cache.  On a unified memory system - one memory for the CPU and the GPU, such as
 /// the DGX Spark (GB10); CUDA reports it as cudaDevAttrIntegrated - cudaMemGetInfo counts only MemFree, not the page cache - which, with the experts read from the GGUF in place, is mostly those
 /// files' clean pages and gives way to a device allocation.  There the figure is MemAvailable less 6 GiB for the OS

@@ -16,6 +16,10 @@ namespace {
 
 constexpr double DEFAULT_STARTUP_TIMEOUT_S = 180.0;
 
+/* A summary field the engine did not report. 0 would read as "zero hits", which is a
+   measurement; this is the absence of one, and the reader is expected to show it as such. */
+constexpr uint32_t NOT_MEASURED = 0xFFFFFFFFu;
+
 std::vector<std::string> split_tokens(const std::string& line) {
     std::vector<std::string> out;
     size_t i = 0;
@@ -64,6 +68,32 @@ bool EngineProcess::read_line(std::string& out) {
     out.assign(buf);
     while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
     return true;
+}
+
+/* The engine's self-description lines: `INFO key=value ...` at startup and `VRAM key=value ...`
+   whenever the tier is resized. Both are key=value, so one parser covers them; anything that is
+   not one of those two prefixes is a request line and is left alone.
+
+   Captured on every read, not only before READY: the VRAM line comes from a resize that happens
+   during a run, and a capability reply asked after that must report the tier the engine is
+   actually on, not the one it started with. */
+void EngineProcess::note_config_line(const std::string& line) {
+    if (line.rfind("INFO ", 0) != 0 && line.rfind("VRAM ", 0) != 0) return;
+    for (const std::string& tok : split_tokens(line)) {
+        const size_t eq = tok.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string key = tok.substr(0, eq);
+        long long v = field_ll({tok.substr(eq + 1)}, 0, 0);
+        if (key == "expert_slots")               expert_slots_ = v;
+        else if (key == "expert_slots_full")     expert_slots_full_ = v;
+        else if (key == "expert_cache_mib")      expert_cache_mib_ = v;
+        else if (key == "expert_cache_full_mib") expert_cache_full_mib_ = v;
+        else if (key == "expert_source")         expert_source_ = v;
+        else if (key == "vram_free_mib")         vram_free_mib_ = v;
+        else if (key == "prompt_chunk")          prompt_chunk_ = v;
+        else continue;
+        expert_seen_ = true;
+    }
 }
 
 bool EngineProcess::start(const std::string& exe, const std::vector<std::string>& args,
@@ -133,6 +163,7 @@ bool EngineProcess::start(const std::string& exe, const std::vector<std::string>
                   std::to_string(WIFEXITED(status) ? WEXITSTATUS(status) : -1) + ")";
             return false;
         }
+        note_config_line(line);
         if (line.rfind("READY ", 0) == 0) {
             auto f = split_tokens(line);
             max_context_ = field_ll(f, 1, 0);
@@ -195,6 +226,10 @@ bool EngineProcess::run(const std::vector<int32_t>& prompt, uint32_t max_new,
     uint32_t reused = 0;
     uint64_t prefill_ms = 0, decode_ms = 0;
     uint32_t accepted = 0, offered = 0;
+    /* The expert-tier accounting. NOT_MEASURED is what an engine that does not report a field
+       leaves behind; the reader turns it into None so a Monitor cell shows "-" instead of 0%. */
+    uint32_t hits = NOT_MEASURED, lookups = NOT_MEASURED, offloaded = NOT_MEASURED;
+    uint32_t read_n = NOT_MEASURED, ram_blobs = NOT_MEASURED, file_blobs = NOT_MEASURED, file_kb = 0;
     hypercore_stop_reason_t reason = HYPERCORE_STOP_REASON_UNSPECIFIED;
     bool done = false;
 
@@ -206,6 +241,7 @@ bool EngineProcess::run(const std::vector<int32_t>& prompt, uint32_t max_new,
             return false;
         }
         if (l.empty()) continue;
+        note_config_line(l);
 
         if (l.rfind("T ", 0) == 0) {
             const int32_t token = (int32_t) field_ll(split_tokens(l), 1, -1);
@@ -229,7 +265,11 @@ bool EngineProcess::run(const std::vector<int32_t>& prompt, uint32_t max_new,
             done = true;
         } else if (l.rfind("DONE ", 0) == 0) {
             /* DONE <generated> <prompt> <prompt_ms> <decode_ms> <finish> <drafts_accepted>
-                   <drafts_offered> <reused> [chain fields] - the engine's own accounting. */
+                   <drafts_offered> <reused> <hits> <lookups> <ram blobs> <file blobs>
+                   <file MB> <prompt tokens read> <offloaded> [chain fields]
+                   - the engine's own accounting. The fields after <reused> are appended, so an
+                   older engine stops at <reused>; those numbers are then NOT_MEASURED rather
+                   than 0, because a zero is a measurement and a missing field is not. */
             auto f = split_tokens(l);
             emitted  = (uint32_t) field_ll(f, 1, (long long) emitted);
             prefill_ms = (uint64_t) field_d(f, 3, 0.0);
@@ -238,6 +278,15 @@ bool EngineProcess::run(const std::vector<int32_t>& prompt, uint32_t max_new,
             accepted = (uint32_t) field_ll(f, 6, 0);
             offered  = (uint32_t) field_ll(f, 7, 0);
             reused   = (uint32_t) field_ll(f, 8, (long long) reused);
+            if (f.size() > 10) {
+                hits     = (uint32_t) field_ll(f, 9, (long long) NOT_MEASURED);
+                lookups  = (uint32_t) field_ll(f, 10, (long long) NOT_MEASURED);
+                ram_blobs = (uint32_t) field_ll(f, 11, (long long) NOT_MEASURED);
+                file_blobs = (uint32_t) field_ll(f, 12, (long long) NOT_MEASURED);
+                file_kb    = (uint32_t) (field_d(f, 13, 0.0) * 1000.0);
+                read_n     = (uint32_t) field_ll(f, 14, (long long) NOT_MEASURED);
+                offloaded  = (uint32_t) field_ll(f, 15, (long long) NOT_MEASURED);
+            }
             done = true;
         }
         /* PP, YIELDED and the progress lines are the engine's own telemetry; the summary is
@@ -252,6 +301,13 @@ bool EngineProcess::run(const std::vector<int32_t>& prompt, uint32_t max_new,
     out.drafts_accepted = accepted;
     out.drafts_offered = offered;
     out.stop_reason = reason;
+    out.cache_hits = hits;
+    out.cache_lookups = lookups;
+    out.offloaded = offloaded;
+    out.prompt_read = read_n;
+    out.ram_blobs = ram_blobs;
+    out.file_blobs = file_blobs;
+    out.file_kb = file_kb;
     /* Time to the first token is measured here, at the boundary, because the engine reports
        the prompt and the decode but not the gap between them. */
     out.time_to_first_token_ms = saw_first_token

@@ -82,8 +82,24 @@ public:
     const std::string& version() const { return version_; }
     const std::string& last_error() const { return last_err_; }
 
+    /* The expert tier this instance is running with, read from the engine's own INFO/VRAM
+       lines. These were until now only ever in the startup text; the Monitor tab and the
+       capability reply need them as numbers. Zero means "the engine never sized a tier", not
+       "the cache is empty" - the caller reports the difference. */
+    int64_t expert_slots() const { return expert_slots_; }
+    int64_t expert_slots_full() const { return expert_slots_full_; }
+    int64_t expert_cache_mib() const { return expert_cache_mib_; }
+    int64_t expert_cache_full_mib() const { return expert_cache_full_mib_; }
+    int64_t vram_free_mib() const { return vram_free_mib_; }
+    int64_t prompt_chunk() const { return prompt_chunk_; }
+    int64_t expert_source() const { return expert_source_; }
+    bool has_expert_tier() const { return expert_seen_; }
+
 private:
     bool read_line(std::string& out);
+    /* key=value lines the engine prints about itself (INFO, VRAM). Captured wherever a line
+       is read, so a tier that is resized mid-run updates what a later CAPS reply reports. */
+    void note_config_line(const std::string& line);
 
     FILE* in_ = nullptr;               // the engine's stdin
     FILE* out_ = nullptr;              // the engine's stdout
@@ -93,6 +109,10 @@ private:
     int64_t batch_slots_ = 0;
     std::string version_;
     std::string last_err_;
+    int64_t expert_slots_ = 0, expert_slots_full_ = 0;
+    int64_t expert_cache_mib_ = 0, expert_cache_full_mib_ = 0;
+    int64_t vram_free_mib_ = 0, prompt_chunk_ = 0, expert_source_ = 0;
+    bool expert_seen_ = false;
     std::mutex req_mu_;                // one request in flight, as the serve loop expects
 };
 

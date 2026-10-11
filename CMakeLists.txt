@@ -501,6 +501,15 @@ if(HYPERCORE_ENABLE_CUDA OR HYPERCORE_ENABLE_HIP)
     add_test(NAME expert_profile_save_test COMMAND expert_profile_save_test)
     set_tests_properties(expert_profile_save_test PROPERTIES TIMEOUT 60)
   endif()
+  # #1: the host arena's pin order follows the routing profile, not the file. The ordering function is CPU-only;
+  # the registration contract it feeds needs a CUDA device with room to register, and exits 77 when there is none.
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/core/pin_order_test.cpp")
+    enable_testing()
+    add_executable(pin_order_test tests/core/pin_order_test.cpp)
+    target_link_libraries(pin_order_test PRIVATE hypercore_engine)
+    add_test(NAME pin_order_test COMMAND pin_order_test ${CMAKE_CURRENT_SOURCE_DIR}/data/expert-profile.bin)
+    set_tests_properties(pin_order_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+  endif()
   if(HYPERCORE_BUILD_TESTS AND HYPERCORE_NATIVE_EXPERTS)
     # native_experts.txt v2-v4 (the real packs' copies and the per-role shard column) and the arena filled from
     # synthetic GGUF shards at the real expert dimensions

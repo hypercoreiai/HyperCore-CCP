@@ -63,17 +63,31 @@ SUBMIT_HEAD = struct.Struct("<IffIIffIQ")          # CFG + reserved + prompt_len
 # The terminal payload is 4 bytes of prompt_reused followed by the 40-byte summary, written
 # field by field by the worker. "<" means no alignment padding, so these are the frozen wire
 # offsets from hypercore/hypercore_api.h - not a C struct's in-memory image.
-SUMMARY_WIRE_SIZE = 40
-TERMINAL_WIRE = struct.Struct("<IIIQQIIII")      # 44 bytes: reused, struct_size, produced,
-                                                 # prefill_ms, decode_ms, accepted, offered,
-                                                 # stop_reason, time_to_first_token_ms
+SUMMARY_WIRE_SIZE = 68
+SUMMARY_MIN_SIZE = 40        # every reader since 0.1.30 knows this prefix
+TERMINAL_WIRE = struct.Struct("<IIIQQIIII" + "IIIIIII")   # 72 bytes: the 44-byte prefix above
+                                                 # plus the expert-tier accounting (hits, lookups,
+                                                 # offloaded, prompt_read, ram_blobs, file_blobs, file_kb)
+TERMINAL_PREFIX = struct.Struct("<IIIQQIIII")   # 44 bytes: what every worker since 0.1.30 sends
 TERMINAL_V1 = struct.Struct("<IIQIIII")          # 32 bytes: the pre-packing draft, still
                                                  # accepted from an older worker binary
 TOKEN = struct.Struct("<iI")                       # token_id, prompt_reused
-CAPS_REPLY = struct.Struct("<IIIIiff")             # 28 bytes: backend, slots, max_ctx, pool_workers,
-                                                  # status, instance_pcie_frac, instance_spec_min_p
+CAPS_REPLY = struct.Struct("<IIIIiff" + "IIIIIII")   # 56 bytes: backend, slots, max_ctx, pool_workers,
+                                                  # status, instance_pcie_frac, instance_spec_min_p,
+                                                  # then the expert tier (slots, slots_full, cache MiB,
+                                                  # cache full MiB, vram free MiB, expert source, prompt chunk)
+CAPS_REPLY_PREFIX = struct.Struct("<IIIIiff")        # 28 bytes: what a worker before 0.1.41 sends
 
 STOP_REASONS = {0: "unspecified", 1: "eos", 2: "limit", 3: "cancel", 4: "error"}
+
+# A summary field the worker did not measure. It is sent as 0xFFFFFFFF, never as 0, because a
+# 0 in a hit-rate cell is a measurement and the absence of one is not - a dashboard that sees 0
+# will alert on a cache that is empty when it is simply unreported.
+NOT_MEASURED = 0xFFFFFFFF
+
+
+def _or_none(value: int) -> int | None:
+    return None if value == NOT_MEASURED else value
 
 # The one table that says what the Monitor reports and where each value comes from.
 #
@@ -84,6 +98,7 @@ STOP_REASONS = {0: "unspecified", 1: "eos", 2: "limit", 3: "cancel", 4: "error"}
 MONITOR_FIELDS: dict[str, tuple[str, str]] = {
     "prefill_ms":      ("summary", "prefill_ms"),
     "prompt_ms":       ("derived", "prompt_ms"),
+    "prefill_tok_s_mean": ("derived", "prefill_tok_s_mean"),
     "decode_ms":       ("summary", "decode_ms"),
     "ttft_ms":         ("summary", "ttft_ms"),
     "tokens_produced": ("summary", "produced_tokens"),
@@ -92,6 +107,17 @@ MONITOR_FIELDS: dict[str, tuple[str, str]] = {
     "stop_reason":     ("summary", "stop_reason"),
     "queue_hold_ms":   ("derived", "queue_hold_ms"),
     "decode_tok_s":    ("derived", "decode_tok_s"),
+    # #Monitor: the expert-tier columns of the Recent requests table. The worker has always
+    # computed these; they were not on the wire, so the table rendered "-" for every request.
+    "prompt_read":     ("summary", "prompt_read"),
+    "cache_hits":      ("summary", "cache_hits"),
+    "cache_lookups":   ("summary", "cache_lookups"),
+    "offloaded":       ("summary", "offloaded"),
+    "ram_blobs":       ("summary", "ram_blobs"),
+    "file_blobs":      ("summary", "file_blobs"),
+    "file_kb":         ("summary", "file_kb"),
+    "hit_rate":        ("derived", "hit_rate"),
+    "pcie_share":      ("derived", "pcie_share"),
     "exit_code":       ("process", "exit_code"),
     "panic":           ("process", "panic"),
     "restarts":        ("watchdog", "restarts"),
@@ -105,6 +131,14 @@ def derive_monitor_field(name: str, summary: dict[str, Any], watchdog: dict[str,
     if name == "prompt_ms":
         prefill = summary.get("prefill_ms")
         return float(prefill) if prefill is not None else None
+    if name == "prefill_tok_s_mean":
+        # The engine's own number: the tokens this request read of its prompt over the time it
+        # took to read them. The cached prefix is not read, so counting it would report a speed
+        # the engine never achieved. A worker that reported neither is unmeasured, not instant.
+        read, prefill = summary.get("prompt_read"), summary.get("prefill_ms")
+        if not read or not prefill:
+            return None
+        return round(read / (prefill / 1000), 1)
     if name == "queue_hold_ms":
         # ttft - prefill. Either side being None means the worker never measured it, and
         # the hold is unknown rather than zero - a dashboard that sees 0 here will page
@@ -114,6 +148,17 @@ def derive_monitor_field(name: str, summary: dict[str, Any], watchdog: dict[str,
     if name == "decode_tok_s":
         produced, decode_ms = summary.get("produced_tokens"), summary.get("decode_ms")
         return round(produced / (decode_ms / 1000), 1) if produced and decode_ms else None
+    if name == "hit_rate":
+        # The share of the decode's routed experts that were already in the VRAM tier. A worker
+        # that never reported the counters gives None, not 0%.
+        hits, lookups = summary.get("cache_hits"), summary.get("cache_lookups")
+        return round(hits / lookups, 3) if hits is not None and lookups else None
+    if name == "pcie_share":
+        # #588: the experts the GPU read over PCIe or another GPU computed. They are in neither
+        # the hits nor the lookups, so the share is of everything routed, not of the VRAM tier.
+        off, lookups = summary.get("offloaded"), summary.get("cache_lookups")
+        routed = (lookups or 0) + (off or 0)
+        return round(off / routed, 3) if off is not None and routed else None
     if name == "status":
         return "up" if watchdog.get("alive") else "down"
     return None
@@ -211,15 +256,27 @@ def decode_terminal(payload: bytes) -> dict[str, int | str | None]:
     """
     if len(payload) >= TERMINAL_WIRE.size:
         (reused, struct_size, produced, prefill_ms, decode_ms,
-         accepted, offered, stop_reason, ttft_ms) = TERMINAL_WIRE.unpack(
+         accepted, offered, stop_reason, ttft_ms,
+         hits, lookups, offloaded, prompt_read, ram_blobs, file_blobs, file_kb) = TERMINAL_WIRE.unpack(
             payload[:TERMINAL_WIRE.size])
-        if struct_size < SUMMARY_WIRE_SIZE:
+        if struct_size < SUMMARY_MIN_SIZE:
             raise FrameError(
                 f"worker declares summary struct_size={struct_size}, "
-                f"below the v1 minimum of {SUMMARY_WIRE_SIZE}"
+                f"below the v1 minimum of {SUMMARY_MIN_SIZE}"
             )
-        # struct_size > SUMMARY_WIRE_SIZE: a newer layout. The prefix is authoritative;
-        # the tail belongs to fields this reader has never seen and must not guess at.
+        # struct_size > SUMMARY_WIRE_SIZE: a newer layout. The prefix is authoritative; the
+        # tail belongs to fields this reader has never seen and must not guess at.
+    elif len(payload) >= TERMINAL_PREFIX.size:
+        # A worker built against the 40-byte summary. The timings are all there; the expert-tier
+        # counters are not, and are reported as absent rather than as zero.
+        (reused, struct_size, produced, prefill_ms, decode_ms,
+         accepted, offered, stop_reason, ttft_ms) = TERMINAL_PREFIX.unpack(payload[:TERMINAL_PREFIX.size])
+        if struct_size < SUMMARY_MIN_SIZE:
+            raise FrameError(
+                f"worker declares summary struct_size={struct_size}, "
+                f"below the v1 minimum of {SUMMARY_MIN_SIZE}"
+            )
+        hits = lookups = offloaded = prompt_read = ram_blobs = file_blobs = file_kb = NOT_MEASURED
     elif len(payload) >= TERMINAL_V1.size:
         # A worker built against the first, unpacked draft of the summary. It has no
         # prefill window and no TTFT, so those are reported as absent.
@@ -227,6 +284,7 @@ def decode_terminal(payload: bytes) -> dict[str, int | str | None]:
             TERMINAL_V1.unpack(payload[:TERMINAL_V1.size])
         prefill_ms = None
         ttft_ms = None
+        hits = lookups = offloaded = prompt_read = ram_blobs = file_blobs = file_kb = NOT_MEASURED
     else:
         raise FrameError(f"short terminal payload: {len(payload)} bytes")
 
@@ -241,6 +299,13 @@ def decode_terminal(payload: bytes) -> dict[str, int | str | None]:
         "stop_reason": STOP_REASONS.get(stop_reason, "unknown"),
         "stop_reason_code": stop_reason,
         "ttft_ms": ttft_ms,
+        "cache_hits": _or_none(hits),
+        "cache_lookups": _or_none(lookups),
+        "offloaded": _or_none(offloaded),
+        "prompt_read": _or_none(prompt_read),
+        "ram_blobs": _or_none(ram_blobs),
+        "file_blobs": _or_none(file_blobs),
+        "file_kb": _or_none(file_kb),
     }
 
 
@@ -253,8 +318,22 @@ def decode_caps(payload: bytes) -> dict[str, int | float]:
 
     backend/slots/max_ctx/pool_workers/status are unsigned-or-signed ints; the last two are the
     resolved Level-1 baseline floats. -1.0 means 'this instance was never given a value'.
+
+    A 28-byte reply from an older worker is read in full and the expert tier is reported as
+    absent (None), not as zero: "no cache" and "I do not know" are different answers, and the
+    Monitor shows them differently.
     """
-    backend, slots, ctx, workers, status, instance_pcie, instance_spec = CAPS_REPLY.unpack(payload)
+    if len(payload) >= CAPS_REPLY.size:
+        (backend, slots, ctx, workers, status, instance_pcie, instance_spec,
+         expert_slots, expert_slots_full, expert_cache_mib, expert_cache_full_mib,
+         vram_free_mib, expert_source, prompt_chunk) = CAPS_REPLY.unpack(payload[:CAPS_REPLY.size])
+    elif len(payload) >= CAPS_REPLY_PREFIX.size:
+        backend, slots, ctx, workers, status, instance_pcie, instance_spec = CAPS_REPLY_PREFIX.unpack(
+            payload[:CAPS_REPLY_PREFIX.size])
+        expert_slots = expert_slots_full = expert_cache_mib = expert_cache_full_mib = 0
+        vram_free_mib = expert_source = prompt_chunk = None
+    else:
+        raise FrameError(f"short caps payload: {len(payload)} bytes, expected at least {CAPS_REPLY_PREFIX.size}")
     return {
         "backend_type": backend,
         "max_batch_slots": slots,
@@ -263,6 +342,13 @@ def decode_caps(payload: bytes) -> dict[str, int | float]:
         "status": status,
         "instance_pcie_frac": instance_pcie,
         "instance_spec_min_p": instance_spec,
+        "expert_slots": expert_slots,
+        "expert_slots_full": expert_slots_full,
+        "expert_cache_mib": expert_cache_mib,
+        "expert_cache_full_mib": expert_cache_full_mib,
+        "vram_free_mib": vram_free_mib,
+        "expert_source": expert_source,
+        "prompt_chunk": prompt_chunk,
     }
 
 

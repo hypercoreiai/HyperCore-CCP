@@ -73,7 +73,8 @@ class CarryOver(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(cfg["model_name"], first["model_name"])
         self.assertEqual(cfg["port"], first["port"])
-        self.assertNotIn("host", cfg)                                     # as before: --host is given to setup
+        self.assertEqual(cfg["host"], "0.0.0.0")                         # setup writes the host now: it is the default
+        self.assertEqual(cfg["api_key"], "0000")
         self.assertEqual(cfg["draft_vocab"], "en")                        # kept by its own rule (saved_draft_vocab)
         self.assertNotIn("kept from", out)
 
@@ -111,7 +112,8 @@ class CarryOver(unittest.TestCase):
             p = Path(d) / "hypercore-x.json"
             p.write_text("{cut off", encoding="utf-8")
             quiet(setup.write_setup_config, p, {"exe": "e", "args": []})
-            self.assertEqual(json.loads(p.read_text(encoding="utf-8")), {"exe": "e", "args": []})
+            self.assertEqual(json.loads(p.read_text(encoding="utf-8")),
+                            {"exe": "e", "args": [], "host": "0.0.0.0", "api_key": "0000", "turn_tail_check": True})
             self.assertEqual((Path(d) / "hypercore-x.json.bak").read_text(encoding="utf-8"), "{cut off")
 
     def test_display_tip_and_typed_ahead_flush(self):
@@ -161,7 +163,8 @@ class CarryOver(unittest.TestCase):
             p = Path(d) / "hypercore-x.json"
             quiet(setup.write_setup_config, p, {"exe": "new"}, src)
             self.assertEqual(json.loads(p.read_text(encoding="utf-8")),
-                             {"exe": "new", "mcp_servers": {"a": {"command": "x"}}})
+                            {"exe": "new", "mcp_servers": {"a": {"command": "x"}},
+                             "host": "0.0.0.0", "api_key": "0000", "turn_tail_check": True})
             self.assertFalse((Path(d) / "hypercore-x.json.bak").exists())   # nothing here was replaced
 
 
@@ -225,6 +228,73 @@ class NoBrowser(unittest.TestCase):
         cmd, out, saved = self.start_cmd({"open_browser": False}, {"open_browser": True})
         self.assertIn("--open", cmd)
         self.assertIs(saved["open_browser"], True)
+
+
+class ServerDefaults(unittest.TestCase):
+    """Every run config setup writes has a host, an API key and the end-of-turn check: a new install answers to the
+    other devices on the network under the key 0000, and a turn that would end is asked whether its work is done.
+    What was asked on this run, or set for this model before, wins over the default."""
+
+    def setUp(self):
+        self.ram, self.found = PROFILES["64GB-1x32GB"]
+
+    def run_setup(self, *extra, configs=()):
+        return install(self.ram, self.found, ["--family", "qwen", "--model", "Q2_0", "--no-start", *extra],
+                       configs=configs)
+
+    def test_a_new_install_gets_them(self):
+        code, out, cfg, _ = self.run_setup()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(cfg["host"], "0.0.0.0")
+        self.assertEqual(cfg["api_key"], "0000")
+        self.assertIs(cfg["turn_tail_check"], True)
+        self.assertIn("the API key is 0000", out)
+        self.assertIn("Turn check:", out)
+
+    def test_what_was_asked_wins(self):
+        code, out, cfg, _ = self.run_setup("--host", "127.0.0.1", "--api-key", "s3cret", "--no-turn-tail-check")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(cfg["host"], "127.0.0.1")
+        self.assertEqual(cfg["api_key"], "s3cret")
+        self.assertIs(cfg["turn_tail_check"], False)
+        self.assertNotIn("Turn check:", out)
+
+    def test_a_model_that_already_has_them_keeps_them(self):
+        earlier = {"exe": "old", "args": ["--kv", "int8"], "host": "192.168.1.5", "api_key": "my-key",
+                   "turn_tail_check": False}
+        code, out, cfg, _ = self.run_setup(configs=[("hypercore-q2_0.json", earlier)])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(cfg["host"], "192.168.1.5")
+        self.assertEqual(cfg["api_key"], "my-key")
+        self.assertIs(cfg["turn_tail_check"], False)
+
+    def test_the_run_script_carries_the_check(self):
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(setup, "ROOT", Path(d)):
+            text = lambda p: p.read_text(encoding="utf-8")   # noqa: E731
+            cfg = Path(d) / "hypercore-q2_0.json"
+            cfg.write_text(json.dumps({"turn_tail_check": True}), encoding="utf-8")
+            self.assertIn('"--turn-tail-check"', text(setup.write_run_script("Q2_0", cfg, 8080)))
+            cfg.write_text(json.dumps({"turn_tail_check": False}), encoding="utf-8")
+            script = setup.write_run_script("Q2_0", cfg, 8080, False)
+            self.assertNotIn("--turn-tail-check", text(script))
+            self.assertNotIn("--open", text(script))
+            # a config that is not there yet: the default, and nothing else changes
+            self.assertIn('"--turn-tail-check"', text(setup.write_run_script("Q2_0", Path(d) / "missing.json", 8080)))
+
+    def test_the_config_writer_applies_them(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "hypercore-x.json"
+            quiet(setup.write_setup_config, p, {"exe": "engine"})
+            cfg = json.loads(p.read_text(encoding="utf-8"))
+            self.assertEqual((cfg["host"], cfg["api_key"], cfg["turn_tail_check"]), ("0.0.0.0", "0000", True))
+            # a key someone set by hand is not replaced by the placeholder when setup runs again
+            cfg["api_key"] = "my-key"
+            cfg["turn_tail_check"] = False
+            p.write_text(json.dumps(cfg), encoding="utf-8")
+            quiet(setup.write_setup_config, p, {"exe": "engine"})
+            again = json.loads(p.read_text(encoding="utf-8"))
+            self.assertEqual(again["api_key"], "my-key")
+            self.assertIs(again["turn_tail_check"], False)
 
 
 class VisionTokens(unittest.TestCase):

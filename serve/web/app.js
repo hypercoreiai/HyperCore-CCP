@@ -87,6 +87,11 @@ for (const b of document.querySelectorAll(".st-tab")) b.onclick = () => showTab(
 window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
 
 // ------------------------------------------------------------------ server access
+// The page is served by the server it talks to, so a key the server was started with
+// (a default "0000", or one set in the model's config) is carried in and used without
+// being typed in. A key typed here still wins, and is kept in this browser only.
+if (window.HYPERCORE_API_KEY && !store.get("apikey", "")) store.set("apikey", window.HYPERCORE_API_KEY);
+
 function headers(json = false) {
   const h = {};
   const key = store.get("apikey", "");
@@ -273,10 +278,18 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
   const speed = live.state === "generating" ? live.tok_s : last ? last.decode_tok_s : null;
   setMetric("speed", speed == null ? null : fmt(speed, 1), "t/s",
             live.state === "generating" ? "Decode now" : last ? "Decode last request" : "Decode");
-  const prefill = live.state !== "idle" ? live.prefill_tok_s_mean
-                : last && last.prompt_ms > 0 ? Math.max(0, last.prompt_tokens - (last.reused || 0)) / (last.prompt_ms / 1000) : null;
+  // The engine's own prefill rate: the prompt tokens it read over the time it took to read
+  // them. A prompt still being read has no figure on the wire until it finishes, so the card
+  // says which request the number came from rather than implying it is live. A 0 here means
+  // "the prompt is already read", not "this prompt took no time", so it falls back to the
+  // last finished request rather than showing a false zero.
+  const livePrefill = live.prefill_tok_s_mean || null;
+  const lastPrefill = last && last.prompt_ms > 0
+                    ? Math.max(0, (last.prompt_read ?? last.prompt_tokens - (last.reused || 0))) / (last.prompt_ms / 1000)
+                    : null;
+  const prefill = livePrefill || lastPrefill;
   setMetric("prefill", prefill == null ? null : fmt(prefill), "t/s",
-            live.state === "reading" ? "Prefill now" : live.state === "generating" ? "Prefill this request" : last ? "Prefill last request" : "Prefill");
+            prefill == null ? "Prefill" : (livePrefill ? "Prefill now" : "Prefill last request"));
   spark("sp-speed", h.tok_s);
   spark("sp-prefill", h.prefill_tok_s_mean);
   // a model split across several cards (issue #112): the cards show their total / mean / hottest, and each card's own

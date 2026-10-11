@@ -2,6 +2,7 @@
  "128GB-1x24GB qwen IQ3_S": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_s",
@@ -32,18 +33,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_s/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_s/tokenizer",
+   "turn_tail_check": true
   }
  },
  "128GB-1x24GB qwen IQ3_XXS": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_xxs",
@@ -74,18 +78,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
+   "turn_tail_check": true
   }
  },
  "128GB-1x24GB qwen Q2_0": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/q2_0",
@@ -116,18 +123,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/q2_0/tokenizer"
+   "tokenizer": "<T>/data/packs/q2_0/tokenizer",
+   "turn_tail_check": true
   }
  },
  "128GB-1x24GB qwen recommended": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_xxs",
@@ -158,18 +168,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
+   "turn_tail_check": true
   }
  },
  "128GB-1x24GB unsloth UD-Q4_K_XL": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/unsloth-ud-q4_k_xl",
@@ -198,18 +211,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer"
+   "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer",
+   "turn_tail_check": true
   }
  },
  "32GB-2x24GB qwen IQ3_S": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_s",
@@ -243,6 +259,7 @@
     1
    ],
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "layer_split": "auto",
    "lib_dirs": [
     "<cuda>"
@@ -250,12 +267,14 @@
    "log": "<T>/hypercore-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_s/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_s/tokenizer",
+   "turn_tail_check": true
   }
  },
  "32GB-2x24GB qwen IQ3_XXS": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_xxs",
@@ -289,6 +308,7 @@
     1
    ],
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "layer_split": "auto",
    "lib_dirs": [
     "<cuda>"
@@ -296,12 +316,14 @@
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
+   "turn_tail_check": true
   }
  },
  "32GB-2x24GB qwen Q2_0": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/q2_0",
@@ -335,6 +357,7 @@
     1
    ],
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "layer_split": "auto",
    "lib_dirs": [
     "<cuda>"
@@ -342,12 +365,14 @@
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/q2_0/tokenizer"
+   "tokenizer": "<T>/data/packs/q2_0/tokenizer",
+   "turn_tail_check": true
   }
  },
  "32GB-2x24GB qwen recommended": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/q2_0",
@@ -381,6 +406,7 @@
     1
    ],
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "layer_split": "auto",
    "lib_dirs": [
     "<cuda>"
@@ -388,12 +414,14 @@
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/q2_0/tokenizer"
+   "tokenizer": "<T>/data/packs/q2_0/tokenizer",
+   "turn_tail_check": true
   }
  },
  "32GB-2x24GB unsloth UD-Q4_K_XL": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/unsloth-ud-q4_k_xl",
@@ -422,18 +450,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer"
+   "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer",
+   "turn_tail_check": true
   }
  },
  "47GB-2x16GB qwen IQ3_S": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_s",
@@ -467,6 +498,7 @@
     1
    ],
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "layer_split": "auto",
    "lib_dirs": [
     "<cuda>"
@@ -474,12 +506,14 @@
    "log": "<T>/hypercore-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_s/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_s/tokenizer",
+   "turn_tail_check": true
   }
  },
  "47GB-2x16GB qwen IQ3_XXS": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_xxs",
@@ -513,6 +547,7 @@
     1
    ],
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "layer_split": "auto",
    "lib_dirs": [
     "<cuda>"
@@ -520,12 +555,14 @@
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
+   "turn_tail_check": true
   }
  },
  "47GB-2x16GB qwen Q2_0": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/q2_0",
@@ -558,6 +595,7 @@
     1
    ],
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "layer_split": "auto",
    "lib_dirs": [
     "<cuda>"
@@ -565,12 +603,14 @@
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/q2_0/tokenizer"
+   "tokenizer": "<T>/data/packs/q2_0/tokenizer",
+   "turn_tail_check": true
   }
  },
  "47GB-2x16GB qwen recommended": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/q2_0",
@@ -603,6 +643,7 @@
     1
    ],
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "layer_split": "auto",
    "lib_dirs": [
     "<cuda>"
@@ -610,12 +651,14 @@
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/q2_0/tokenizer"
+   "tokenizer": "<T>/data/packs/q2_0/tokenizer",
+   "turn_tail_check": true
   }
  },
  "47GB-2x16GB unsloth UD-Q4_K_XL": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/unsloth-ud-q4_k_xl",
@@ -644,18 +687,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer"
+   "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer",
+   "turn_tail_check": true
   }
  },
  "64GB-1x32GB qwen IQ3_S": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_s",
@@ -684,18 +730,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_s/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_s/tokenizer",
+   "turn_tail_check": true
   }
  },
  "64GB-1x32GB qwen IQ3_XXS": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_xxs",
@@ -726,18 +775,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
+   "turn_tail_check": true
   }
  },
  "64GB-1x32GB qwen Q2_0": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/q2_0",
@@ -768,18 +820,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/q2_0/tokenizer"
+   "tokenizer": "<T>/data/packs/q2_0/tokenizer",
+   "turn_tail_check": true
   }
  },
  "64GB-1x32GB qwen recommended": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_xxs",
@@ -810,18 +865,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
+   "turn_tail_check": true
   }
  },
  "64GB-1x32GB unsloth UD-Q4_K_XL": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/unsloth-ud-q4_k_xl",
@@ -850,18 +908,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer"
+   "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer",
+   "turn_tail_check": true
   }
  },
  "96GB-1x16GB qwen IQ3_S": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_s",
@@ -892,18 +953,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_s/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_s/tokenizer",
+   "turn_tail_check": true
   }
  },
  "96GB-1x16GB qwen IQ3_XXS": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_xxs",
@@ -934,18 +998,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
+   "turn_tail_check": true
   }
  },
  "96GB-1x16GB qwen Q2_0": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/q2_0",
@@ -976,18 +1043,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/q2_0/tokenizer"
+   "tokenizer": "<T>/data/packs/q2_0/tokenizer",
+   "turn_tail_check": true
   }
  },
  "96GB-1x16GB qwen recommended": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/iq3_xxs",
@@ -1018,18 +1088,21 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
+   "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
+   "turn_tail_check": true
   }
  },
  "96GB-1x16GB unsloth UD-Q4_K_XL": {
   "code": 0,
   "config": {
+   "api_key": "0000",
    "args": [
     "--pack",
     "<T>/data/packs/unsloth-ud-q4_k_xl",
@@ -1058,13 +1131,15 @@
    "exe": "<T>/engine/<EXE>",
    "gpu": 0,
    "gpus_asked": true,
+   "host": "0.0.0.0",
    "lib_dirs": [
     "<cuda>"
    ],
    "log": "<T>/hypercore-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
    "port": 8080,
-   "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer"
+   "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer",
+   "turn_tail_check": true
   }
  }
 }

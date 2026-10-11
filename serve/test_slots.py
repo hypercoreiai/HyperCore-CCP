@@ -21,8 +21,8 @@ from serve.hypercore_supervisor import HyperCoreProcessSupervisor
 from serve.ipc_parser import (
     MONITOR_FIELDS,
     STREAM_TOKEN,
+    TERMINAL_PREFIX,
     TERMINAL_V1,
-    TERMINAL_WIRE,
     decode_terminal,
     derive_monitor_field,
 )
@@ -249,7 +249,7 @@ class TelemetryContractTest(unittest.TestCase):
                         "the derived hold reports a draft cycle the worker never ran")
 
     def test_a_longer_summary_is_read_as_a_prefix(self):
-        payload = TERMINAL_WIRE.pack(1, 48, 6, 10, 20, 2, 3, 2, 15) + b"\x01\x02\x03\x04\x05\x06\x07\x08"
+        payload = TERMINAL_PREFIX.pack(1, 48, 6, 10, 20, 2, 3, 2, 15) + b"\x01\x02\x03\x04\x05\x06\x07\x08"
         summary = decode_terminal(payload)
         self.assertEqual(summary["struct_size"], 48)
         self.assertEqual(summary["produced_tokens"], 6)
@@ -259,7 +259,7 @@ class TelemetryContractTest(unittest.TestCase):
     def test_a_summary_below_the_v1_minimum_is_refused(self):
         from serve.ipc_parser import FrameError
         with self.assertRaises(FrameError):
-            decode_terminal(TERMINAL_WIRE.pack(0, 36, 1, 1, 1, 0, 0, 1, 0))
+            decode_terminal(TERMINAL_PREFIX.pack(0, 36, 1, 1, 1, 0, 0, 1, 0))
 
 
 if __name__ == "__main__":

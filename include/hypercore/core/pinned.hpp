@@ -39,6 +39,13 @@ struct PinnedArena {
     uint64_t registered_bytes = 0;
     uint64_t slice_bytes = 0;
     int registered_slices = 0;
+    /// One flag per slice: which slices CUDA actually took. Empty when the whole arena was registered in one
+    /// call, in which case every slice is registered. `registered_bytes` is a TOTAL, not a prefix, once an
+    /// order is given - a slice in the middle of the arena can be pinned while an earlier one is not.
+    std::vector<uint8_t> registered;
+    /// The slice boundaries, kept only when the unregistered slices had to be locked individually (an ordered
+    /// registration leaves them scattered). Empty means the unregistered part was one contiguous tail.
+    std::vector<uint64_t> slice_bounds;
 
     PinnedArena() = default;
     /// `slice`: the piece size for the per-slice registration fallback (0 = none).
@@ -50,8 +57,15 @@ struct PinnedArena {
     /// `shared_pack_hash` identifies the pack that is allowed to populate that backing.  The file carries a
     /// small header and is refused when its stored hash does not match.  Empty `shared_file` preserves the
     /// existing allocation path.  Population/coordination and backing-file lifetime remain the caller's job.
+    /// `register_order`: which slices to register, and in what order. Empty = arena order, which pins layers
+    /// 0..k when the cap is reached. The engine's routing profile knows which layers are actually read, so
+    /// passing them first makes a capped pin cover the hot layers instead of the first layers. Indices outside
+    /// [0, bounds.size()-1) are ignored; slices the order omits are appended in arena order.
+    /// `core::hot_layer_order` returns an empty order when the profile's layer heat is flat, so a model whose
+    /// routing is uniform across layers (Qwen3.8-Flash on this node) takes the arena-order path unchanged.
     PinnedArena(uint64_t bytes, const std::vector<uint64_t>& bounds, uint64_t max_pinned_bytes = 0,
-                const std::string& shared_file = {}, uint64_t shared_pack_hash = 0);
+                const std::string& shared_file = {}, uint64_t shared_pack_hash = 0,
+                const std::vector<uint64_t>& register_order = {});
     /// #285: reserve only; the caller registers the slices with register_slices(), on a thread, while its readers
     /// fill the ones already registered (one registration of the whole arena cost ~2.5 s at 33 GiB of 4 KB pages).
     struct Deferred {};
@@ -68,6 +82,13 @@ struct PinnedArena {
     PinnedArena& operator=(const PinnedArena&) = delete;
 
     bool valid() const { return base != nullptr; }
+    /// Is slice `i` page-locked for the copy engine? Slices are one per layer, so this answers "is this
+    /// layer's expert data registered" without depending on the registration being a prefix.
+    bool slice_registered(size_t i) const {
+        if (base == nullptr) return false;
+        if (registered.empty()) return slice_bytes == 0;   // whole-arena registration, or no slices
+        return i < registered.size() && registered[i] != 0;
+    }
     uint8_t* data() const { return (uint8_t*) base; }
 };
 

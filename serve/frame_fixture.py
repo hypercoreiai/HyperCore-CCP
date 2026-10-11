@@ -27,10 +27,12 @@ import threading
 import time
 
 from serve.ipc_parser import (
+    CAPS_REPLY,
     CMD_CANCEL,
     CMD_CAPS,
     CMD_PING,
     CMD_SUBMIT,
+    NOT_MEASURED,
     RESP_CAPS,
     RESP_PONG,
     RESP_STATUS,
@@ -74,6 +76,22 @@ class ScriptedWorker:
         pool_workers: int = 4,
         instance_pcie_frac: float = -1.0,
         instance_spec_min_p: float = -1.0,
+        token_start: int = 1000,
+        prompt_reused: int = 0,
+        cache_hits: int | None = None,
+        cache_lookups: int | None = None,
+        offloaded: int | None = None,
+        prompt_read: int | None = None,
+        ram_blobs: int | None = None,
+        file_blobs: int | None = None,
+        file_kb: int | None = None,
+        expert_slots: int = 0,
+        expert_slots_full: int = 0,
+        expert_cache_mib: int = 0,
+        expert_cache_full_mib: int = 0,
+        vram_free_mib: int = 0,
+        expert_source: int = 0,
+        prompt_chunk: int = 0,
     ) -> None:
         self.max_slots = max_slots
         self.tokens = tokens
@@ -87,6 +105,22 @@ class ScriptedWorker:
         self.pool_workers = pool_workers
         self.instance_pcie_frac = instance_pcie_frac
         self.instance_spec_min_p = instance_spec_min_p
+        self.token_start = token_start
+        self.prompt_reused = prompt_reused
+        self.cache_hits = cache_hits
+        self.cache_lookups = cache_lookups
+        self.offloaded = offloaded
+        self.prompt_read = prompt_read
+        self.ram_blobs = ram_blobs
+        self.file_blobs = file_blobs
+        self.file_kb = file_kb
+        self.expert_slots = expert_slots
+        self.expert_slots_full = expert_slots_full
+        self.expert_cache_mib = expert_cache_mib
+        self.expert_cache_full_mib = expert_cache_full_mib
+        self.vram_free_mib = vram_free_mib
+        self.expert_source = expert_source
+        self.prompt_chunk = prompt_chunk
 
         self.in_flight = 0
         self.received: list[tuple[int, int, bytes]] = []
@@ -102,6 +136,12 @@ class ScriptedWorker:
         self.in_flight = 0
         self._cancelled.clear()
         self.link_closed.clear()
+        old = getattr(self, "_sock", None)
+        if old is not None:
+            try:
+                old.close()
+            except OSError:
+                pass
         parent, child = socket.socketpair()
         self._sock = child
         self._thread = threading.Thread(target=self._serve, daemon=True)
@@ -243,7 +283,7 @@ class ScriptedWorker:
                 # real worker does. A fixture that guessed TTFT from prefill_s would be
                 # testing a number nothing in production produces.
                 ttft_ms = int((time.monotonic() - request_start) * 1000)
-            self._send(4, request_id, struct.pack("<iI", 1000 + i, 0))
+            self._send(4, request_id, struct.pack("<iI", self.token_start + i, self.prompt_reused))
             produced += 1
             time.sleep(0.001)
 
@@ -259,10 +299,12 @@ class ScriptedWorker:
         self._cancelled.add(request_id)
 
     def _handle_caps(self, request_id: int) -> None:
-        payload = struct.pack(
-            "<IIIIiff",
+        payload = CAPS_REPLY.pack(
             self.backend, self.max_slots, self.max_context, self.pool_workers, 0,
             self.instance_pcie_frac, self.instance_spec_min_p,
+            self.expert_slots, self.expert_slots_full, self.expert_cache_mib,
+            self.expert_cache_full_mib, self.vram_free_mib, self.expert_source,
+            self.prompt_chunk,
         )
         self._send(RESP_CAPS, request_id, payload)
 
@@ -270,9 +312,15 @@ class ScriptedWorker:
                       ttft_ms: int = 0, prefill_ms: int = 0, decode_ms: int = 0) -> None:
         # Built from TERMINAL_WIRE, the same Struct the parser reads with. The fixture and
         # the decoder cannot drift apart, which is the point of freezing the layout.
+        def wire(value: int | None) -> int:
+            return NOT_MEASURED if value is None else int(value)
+
         self._send(
             STREAM_TERMINAL,
             request_id,
-            TERMINAL_WIRE.pack(0, SUMMARY_WIRE_SIZE, produced, prefill_ms, decode_ms,
-                              0, 0, stop, ttft_ms),
+            TERMINAL_WIRE.pack(self.prompt_reused, SUMMARY_WIRE_SIZE, produced, prefill_ms, decode_ms,
+                              0, 0, stop, ttft_ms,
+                              wire(self.cache_hits), wire(self.cache_lookups), wire(self.offloaded),
+                              wire(self.prompt_read), wire(self.ram_blobs), wire(self.file_blobs),
+                              wire(self.file_kb)),
         )

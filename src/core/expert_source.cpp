@@ -3149,7 +3149,8 @@ ArenaExpertSource::~ArenaExpertSource() { close(); }
 
 bool ArenaExpertSource::open(const std::string& pack_dir, int64_t n_layers, int64_t n_expert, int threads,
                              std::string& err, uint64_t max_pinned_bytes,
-                             const std::string& shared_arena_file) {
+                             const std::string& shared_arena_file,
+                             const std::vector<uint64_t>& register_order) {
     close();
     const std::string path = pack_dir + "/experts.bin";
     // plan v0.3 P6: the layout (canonical, or a native pack's per-layer blobs) was loaded by the driver
@@ -3285,7 +3286,7 @@ bool ArenaExpertSource::open(const std::string& pack_dir, int64_t n_layers, int6
 #endif
     PinnedArena* a = deferred ? new PinnedArena(want + (uint64_t) blob, bounds, PinnedArena::Deferred{})
                               : new PinnedArena(want + (uint64_t) blob, bounds, max_pinned_bytes,
-                                                shared_arena_file, pack_hash);
+                                                shared_arena_file, pack_hash, register_order);
     if (!a->valid()) {
         const std::string why = a->note;
         delete a;
@@ -3372,19 +3373,32 @@ bool ArenaExpertSource::open(const std::string& pack_dir, int64_t n_layers, int6
     arena_ = a;
     base_ = a->data();
     pinned_bytes_ = a->registered_bytes;
-    // plan v0.3 P6: device aliases of the mapped registration, for the PCIe share of the misses
+    slice_registered_ = a->registered;   // empty when the whole arena was registered in one call
+    // plan v0.3 P6: device aliases of the mapped registration, for the PCIe share of the misses. Indexed by
+    // slice, so an ordered registration does not put a hot layer's alias at a cold layer's index.
     dev_slice_.clear();
     slice_bytes_ = a->slice_bytes;
     if (a->registered_bytes > 0) {
-        std::vector<uint64_t> starts = a->slice_bytes > 0 ? a->slice_starts : std::vector<uint64_t>{0};
-        for (uint64_t off : starts) {
+        if (a->slice_bytes == 0) {
             void* d = nullptr;
-            if (cudaHostGetDevicePointer(&d, (void*) (base_ + off), 0) != cudaSuccess) {
+            if (cudaHostGetDevicePointer(&d, (void*) base_, (size_t) (want + (uint64_t) blob)) == cudaSuccess && d != nullptr) {
+                dev_slice_.push_back((const uint8_t*) d);
+            } else {
                 (void) cudaGetLastError();
-                dev_slice_.clear();
-                break;
             }
-            dev_slice_.push_back((const uint8_t*) d);
+        } else {
+            dev_slice_.assign(bounds.size() - 1, nullptr);
+            for (size_t i = 0; i + 1 < bounds.size(); ++i) {
+                if (!a->slice_registered(i)) continue;
+                void* d = nullptr;
+                if (cudaHostGetDevicePointer(&d, (void*) (base_ + bounds[i]), (size_t) (bounds[i + 1] - bounds[i])) != cudaSuccess || d == nullptr) {
+                    (void) cudaGetLastError();
+                    dev_slice_.clear();
+                    slice_registered_.clear();
+                    break;
+                }
+                dev_slice_[i] = (const uint8_t*) d;
+            }
         }
     }
     blobs_ = n_layers * n_expert;
@@ -3450,6 +3464,8 @@ uint64_t ArenaExpertSource::release(int64_t layer, int64_t expert) {
 
 bool ArenaExpertSource::pinned(int64_t layer, int64_t expert) const {
     if (base_ == nullptr || layer < 0 || expert < 0 || expert >= n_expert_) return false;
+    // An ordered registration is not a prefix: ask the arena which slice it took.
+    if (!slice_registered_.empty()) return slice_registered_[(size_t) layer] != 0;
     const auto& lay = hypercore::kernels::cpu::expert_layout();
     return lay.blob_offset(layer, expert) + lay.blob_bytes(layer) <= pinned_bytes_;
 }
@@ -3459,7 +3475,7 @@ const uint8_t* ArenaExpertSource::device_alias(int64_t layer, int64_t expert) co
     const auto& lay = hypercore::kernels::cpu::expert_layout();
     if (slice_bytes_ == 0) return dev_slice_[0] + lay.blob_offset(layer, expert);
     // one registration slice per layer
-    if ((size_t) layer >= dev_slice_.size()) return nullptr;
+    if ((size_t) layer >= dev_slice_.size() || dev_slice_[(size_t) layer] == nullptr) return nullptr;
     return dev_slice_[(size_t) layer] + (uint64_t) expert * lay.blob_bytes(layer);
 }
 

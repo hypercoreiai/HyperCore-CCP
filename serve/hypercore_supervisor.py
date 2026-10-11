@@ -81,6 +81,41 @@ class StreamStalled(WorkerUnreachable):
 ARGV_SAFE_CONFIG_BYTES = 128 * 1024 - 1   # Linux MAX_ARG_STRLEN: one argv entry cannot be larger
 
 
+# ---------------------------------------------------------------------- socket hygiene
+# A Unix socket name outlives the process that bound it: the file stays in /tmp after the
+# worker exits, and the next bind on that name fails with EADDRINUSE. Two supervisors that
+# share one name also share the "{socket}.config.json" side file, so a collision is not
+# only a bind failure - it is a worker reading another run's config.
+#
+# Two rules follow, and both are enforced here rather than in each caller:
+#   1. every socket path is namespaced by the process that owns it;
+#   2. whatever sits at the path is removed before the worker is spawned, and the name is
+#      removed again when the supervisor stops.
+def unique_socket_path(prefix: str = "hypercore") -> str:
+    """A socket path no other process on this machine can already be holding."""
+    return f"/tmp/{prefix}-{os.getpid()}-{os.urandom(4).hex()}.sock"
+
+
+def evict_stale_socket(path: str) -> tuple[bool, str]:
+    """Remove whatever is at `path`. Returns (cleared, why it could not be cleared).
+
+    A plain unlink covers the ordinary leftover. The two that are not ordinary are a
+    directory left where a socket should be, and a socket owned by another user under the
+    sticky bit on /tmp. Neither can be removed by this process, and both make bind() fail
+    with EADDRINUSE - which is the failure a shared /tmp produces on a CI runner.
+    """
+    if not os.path.exists(path):
+        return True, ""
+    try:
+        if os.path.isdir(path):
+            os.rmdir(path)
+        else:
+            os.unlink(path)
+        return True, ""
+    except OSError as exc:
+        return False, str(exc)
+
+
 class HyperCoreProcessSupervisor:
     """Start, stop, restart and talk to one engine worker.
 
@@ -98,6 +133,7 @@ class HyperCoreProcessSupervisor:
         max_restarts: int = 3,
         backoff_s: tuple[float, ...] = (0.5, 1.0, 2.0),
         startup_timeout_s: float = 30.0,
+        silence_s: float = 0.0,
         logger: logging.Logger | None = None,
         transport: Callable[[], socket.socket] | None = None,
     ) -> None:
@@ -106,7 +142,10 @@ class HyperCoreProcessSupervisor:
         cancel during prefill, link death) can be exercised without a GPU or a subprocess.
         The protocol under test is the same one the real worker speaks."""
         self.worker_binary = worker_binary
-        self.socket_path = socket_path
+        # No path given means no caller cares which name is used, so pick one this process
+        # owns outright. An empty path is not a valid socket: the worker would bind "" and
+        # fail with EINVAL, which reads as a mystery rather than as a missing argument.
+        self.socket_path = socket_path or unique_socket_path("hypercore-supervisor")
         self.config = config
         self.stderr_log = stderr_log
         self.max_restarts = max_restarts
@@ -116,6 +155,11 @@ class HyperCoreProcessSupervisor:
         # VRAM tier loading, which is the "minute or two" the run script warns about. A model
         # config must raise this, or a slow-but-healthy load is killed as a failure.
         self.startup_timeout_s = startup_timeout_s
+        # #481: how long a running request may go without a frame before it is called stalled.
+        # 0 means no wall: a prompt that takes minutes to read is allowed to take minutes. This
+        # is NOT the startup timeout - a 116k-token prefill is ~31 s on this machine, and a wall
+        # borrowed from the 30 s handshake kills a healthy request mid-prefill.
+        self.silence_s = float(silence_s)
         self.log = logger or logging.getLogger("hypercore.supervisor")
 
         self._proc: subprocess.Popen | None = None
@@ -144,6 +188,10 @@ class HyperCoreProcessSupervisor:
         self._transport = transport
         self._transport_obj = transport if hasattr(transport, "connect") else None
         self._stderr_handle = None
+        # Two supervisors in one process are a real case (a restart path, a test harness),
+        # so the side file is keyed on the instance, not just the pid.
+        self._instance_id = f"{os.getpid()}-{os.urandom(4).hex()}"
+        self._config_side_files: list[str] = []
 
     # ---------------------------------------------------------------- lifecycle
     def _config_argument(self) -> str:
@@ -153,12 +201,17 @@ class HyperCoreProcessSupervisor:
         A larger one would fail exec outright, so it is written to a file next to the
         socket and passed by path. The file is rewritten on every start, so a restart
         reads the config that was resolved for this process, not an older one.
+
+        The side file carries this supervisor's identity. Two supervisors handed the same
+        socket name would otherwise write to one file, and whichever started last would
+        silently set the other's configuration.
         """
         if len(self.config.encode("utf-8")) <= ARGV_SAFE_CONFIG_BYTES:
             return self.config
-        path = f"{self.socket_path}.config.json"
+        path = f"{self.socket_path}.{self._instance_id}.config.json"
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(self.config)
+        self._config_side_files.append(path)
         return path
 
     def start_worker(self, timeout_s: float | None = None) -> bool:
@@ -194,10 +247,17 @@ class HyperCoreProcessSupervisor:
         if self._transport is not None:
             self._sock = self._transport() if callable(self._transport) else self._transport.connect()
         else:
-            try:
-                os.unlink(self.socket_path)
-            except OSError:
-                pass
+            # Sanitation gate. The worker also unlinks its own path, but it cannot remove
+            # a name it does not own, and it cannot tell a stale file from a live listener.
+            # Doing it here lets a collision be resolved by choosing a different name instead
+            # of dying on bind.
+            cleared, why = evict_stale_socket(self.socket_path)
+            if not cleared:
+                self.log.warning(
+                    "socket %s could not be cleared (%s); moving to a process-private path",
+                    self.socket_path, why,
+                )
+                self.socket_path = unique_socket_path("hypercore-supervisor")
 
             stderr_target = open(self.stderr_log, "w") if self.stderr_log else subprocess.PIPE  # noqa: SIM115 - the handle is kept so last_stderr() can read it
             self._proc = subprocess.Popen(
@@ -218,6 +278,11 @@ class HyperCoreProcessSupervisor:
                     self._sock.connect(self.socket_path)
                     break
                 except OSError:
+                    if self._sock is not None:
+                        try:
+                            self._sock.close()
+                        except OSError:
+                            pass
                     self._sock = None
                     time.sleep(0.1)
             else:
@@ -268,7 +333,19 @@ class HyperCoreProcessSupervisor:
                 self._proc.wait(timeout=10)
             except (OSError, subprocess.TimeoutExpired):
                 self._proc.kill()
+            if self._proc.stderr is not None:
+                try:
+                    self._proc.stderr.close()
+                except OSError:
+                    pass
             self._proc = None
+        # The socket name survives the worker's exit. Leaving it in /tmp is exactly how a
+        # later run on the same path finds a file it cannot bind over, so the supervisor
+        # takes the name back when it is done with it.
+        if self._transport is None and self.socket_path:
+            evict_stale_socket(self.socket_path)
+        for side in getattr(self, "_config_side_files", ()):  # the config file we wrote for this worker
+            evict_stale_socket(side)
         if self._stderr_handle is not None:
             try:
                 self._stderr_handle.close()
@@ -485,7 +562,7 @@ class HyperCoreProcessSupervisor:
         pcie_frac: float = -1.0,
         spec_min_p: float = -1.0,
         timeout_s: float = 30.0,
-        silence_s: float = 0.0,
+        silence_s: float | None = None,
         request_id: int | None = None,
     ) -> Iterator[tuple[int, int, dict[str, Any]]]:
         """Yield (msg_type, token_id, metrics) for one request, ack to terminal.
@@ -496,6 +573,13 @@ class HyperCoreProcessSupervisor:
         message: the HTTP layer, the calibration adapter and generate() all read
         through it, so a wire change lands in one loop instead of three.
 
+        `timeout_s` is the wall for the worker's ack to a submit, not for the stream.
+        `silence_s` is how long the stream may go without a frame; None takes the
+        supervisor's own wall (self.silence_s, from the config's "engine_silence_s"),
+        and 0 waits as long as the request needs. Reading a large prompt emits no
+        token frames at all, so a frame wall taken from the startup timeout would
+        stall a healthy request in the middle of its prefill.
+
         The timeout walls and the CANCEL frame live here. A caller that stops
         consuming early - a dropped client - does not have to know about
         CMD_CANCEL: the finally block sends it, so slot reclamation is never the
@@ -505,6 +589,7 @@ class HyperCoreProcessSupervisor:
         WorkerRejected when the configuration is invalid, StreamStalled when the
         stream goes silent, WorkerUnreachable when the link itself dies.
         """
+        wall = self.silence_s if silence_s is None else float(silence_s)
         request_id = request_id or self.next_request_id()
         listener = self._listener
         if listener is None:
@@ -513,6 +598,7 @@ class HyperCoreProcessSupervisor:
         frames = self.open_stream(request_id)
         terminal_seen = False
         accepted = False
+        link_dead = False          # the drain below is only for a link that is still there
         try:
             payload = build_submit_payload(
                 temperature=temperature,
@@ -524,12 +610,15 @@ class HyperCoreProcessSupervisor:
                 prompt_tokens=prompt_tokens,
             )
             if not self.send_ipc_message(CMD_SUBMIT, request_id, payload):
+                link_dead = True
                 raise WorkerUnreachable("link closed before the request was sent")
 
             item = frames.get(timeout=timeout_s)
             if item[0] is None:
+                link_dead = True
                 raise WorkerUnreachable("worker died while scheduling the request")
             if item[0] != expected_reply(CMD_SUBMIT):
+                link_dead = True
                 raise WorkerUnreachable(f"expected an ack frame, got {item[0]}")
             status = decode_status(item[2])
             if status == -2:
@@ -540,11 +629,9 @@ class HyperCoreProcessSupervisor:
             self.last_frame_at = time.monotonic()
 
             while True:
-                wait = timeout_s
-                if silence_s > 0:
-                    wait = min(
-                        timeout_s, max(0.1, silence_s - (time.monotonic() - self.last_frame_at))
-                    )
+                # The wall is the silence limit measured from the last frame, not the
+                # startup timeout: a prefill that needs 31 s gets 31 s.
+                wait = None if wall <= 0 else max(0.1, wall - (time.monotonic() - self.last_frame_at))
                 try:
                     tag, token_id, frame_payload = frames.get(timeout=wait)
                 except queue.Empty:
@@ -554,9 +641,11 @@ class HyperCoreProcessSupervisor:
                     # The finally block sends the CANCEL; doing it here too would put
                     # two cancel frames on the wire for one dead stream.
                     if not self.ping():
+                        link_dead = True
                         raise WorkerUnreachable("worker stopped answering") from None
                     raise StreamStalled(f"no frame for {wait}s") from None
                 if tag is None:
+                    link_dead = True
                     raise WorkerUnreachable("worker died mid-stream")
                 self.last_frame_at = time.monotonic()
                 if tag == STREAM_TOKEN:
@@ -573,12 +662,28 @@ class HyperCoreProcessSupervisor:
                     terminal_seen = True
                     yield (STREAM_TERMINAL, -1, summary)
                     return
+                link_dead = True
                 raise WorkerUnreachable(f"unexpected frame type {tag} on a stream queue")
         finally:
             # A request the worker never accepted has no slot to reclaim;
             # a stalled or abandoned one does.
             if accepted and not terminal_seen:
                 self.cancel(request_id)
+                # The worker answers a cancel with its own terminal frame, and this is the
+                # only place it can be read: a caller that stopped consuming early (a turn
+                # that ended on the end-of-turn token, a stop string, a thinking budget) has
+                # closed the generator before the stream's end, and without this the Monitor
+                # has no Reused, Tok/s or hit rate for that request. A dead or silent link is
+                # not drained: there is nothing on it to read, and waiting would hold up the
+                # recovery that the caller is about to do.
+                if not link_dead:
+                    try:
+                        tag, _, summary = frames.get(timeout=min(5.0, timeout_s))
+                    except queue.Empty:
+                        pass
+                    else:
+                        if tag == STREAM_TERMINAL:
+                            self.note_frame(summary if isinstance(summary, dict) else {})
             self.close_stream(request_id)
     # ---------------------------------------------------------------- the Engine surface
     def generate(

@@ -355,7 +355,7 @@ PinnedArena::PinnedArena(uint64_t bytes, uint64_t slice) : PinnedArena(bytes, un
 
 PinnedArena::PinnedArena(uint64_t bytes, const std::vector<uint64_t>& bounds,
                          uint64_t max_pinned_bytes, const std::string& shared_file,
-                         uint64_t shared_pack_hash) : capacity(bytes) {
+                         uint64_t shared_pack_hash, const std::vector<uint64_t>& register_order) : capacity(bytes) {
     if (bytes == 0) return;
     base = reserve(bytes, backing, note, shared_file, shared_pack_hash, mapping_base, mapping_bytes);
     if (base != nullptr && mapping_base == nullptr) {
@@ -393,15 +393,35 @@ PinnedArena::PinnedArena(uint64_t bytes, const std::vector<uint64_t>& bounds,
             // 64 GB PC pins 30 GiB past that budget without trouble, and capping it at 26 cost ~20% prompt speed.
             if (!capped && env_gib == -2) limited = sliced_pin_limit(limit, limit_why);
 #endif
-            for (size_t i = 0; i + 1 < bounds.size(); ++i) {
+            // #634: the order the slices are registered in. Empty is arena order, which pins layers 0..k when
+            // the cap is reached - the first layers, not the read ones. The caller passes the layers its routing
+            // profile has seen, hottest first, so a capped pin covers the working set. A slice CUDA refuses
+            // ends the registration, and the rest is kept resident by the working-set lock.
+            const size_t slices = bounds.size() - 1;
+            std::vector<size_t> order;
+            order.reserve(slices);
+            std::vector<uint8_t> seen(slices, 0);
+            for (uint64_t s : register_order) {
+                if (s < slices && !seen[(size_t) s]) { seen[(size_t) s] = 1; order.push_back((size_t) s); }
+            }
+            for (size_t i = 0; i < slices; ++i) if (!seen[i]) order.push_back(i);
+            registered.assign(slices, 0);
+
+            uint64_t pinned_so_far = 0;
+            for (size_t i : order) {
                 const uint64_t off = bounds[i], n = bounds[i + 1] - bounds[i];
-                if (limited && (off > limit || n > limit - off)) break;
+                // A slice that does not fit the remaining cap is skipped, not fatal: a smaller hot layer later
+                // in the order can still be registered. A driver refusal is fatal - the pinned pool is
+                // exhausted, and no later slice will fit either.
+                if (limited && n > limit - pinned_so_far) continue;
                 if (cudaHostRegister((uint8_t*) base + off, (size_t) n, cudaHostRegisterPortable | cudaHostRegisterMapped) != cudaSuccess) {
                     (void) cudaGetLastError();
                     break;
                 }
                 slice_starts.push_back(off);
-                registered_bytes = off + n;
+                registered[i] = 1;
+                pinned_so_far += n;
+                registered_bytes = pinned_so_far;
                 ++registered_slices;
             }
             char gib[32];
@@ -412,15 +432,65 @@ PinnedArena::PinnedArena(uint64_t bytes, const std::vector<uint64_t>& bounds,
                                         "; HYPERCORE_ARENA_PIN_GIB=auto; N sets a cap; #243); " : std::string())) +
                    std::to_string(registered_slices) + " slices pinned (" + std::to_string(registered_bytes >> 30) +
                    " GiB); " + note;
+            // Which ones, so the startup print says what the pin covers rather than how much of it. An ordered
+            // registration is not a prefix, so "N slices" alone can be read as "layers 0..N-1" and is not.
+            // A capped registration can leave holes even without an explicit order: a slice that does not fit
+            // the remaining cap is skipped, and a smaller one after it may still be taken. The tail lock is only
+            // safe when the unregistered part is one contiguous run; otherwise every unregistered slice has to be
+            // locked on its own. With no order the registration is a prefix, so this is the old single lock.
+            size_t prefix_end = 0;
+            while (prefix_end < slices && registered[prefix_end]) ++prefix_end;
+            bool registered_prefix = true;
+            for (size_t i = prefix_end; i < slices; ++i) {
+                if (registered[i]) { registered_prefix = false; break; }
+            }
+            if (!registered_prefix && registered_slices > 0 && registered_slices < slices) {
+                std::string which;
+                for (size_t i = 0; i < slices; ++i) {
+                    if (!registered[i]) continue;
+                    if (!which.empty()) which += ",";
+                    which += std::to_string(i);
+                    if (which.size() > 48) { which += "..."; break; }
+                }
+                note = "registered slices " + which +
+                       (register_order.empty() ? " (not a contiguous prefix); " : " (in the order the caller gave, not arena order); ") +
+                       note;
+            }
             if (registered_bytes < bytes) {
                 const char* env = std::getenv("HYPERCORE_ARENA_LOCK");
                 if (backing == PageBacking::LargePages) {   // #779: large pages cannot be paged out: nothing to lock
                     note = "large pages are resident without a lock; " + note;
                 } else if (env == nullptr || std::string(env) != "0") {
-                    const hypercore::platform::LockResult lr =
-                        hypercore::platform::lock_resident((uint8_t*) base + registered_bytes, bytes - registered_bytes);
-                    locked_bytes = lr.locked_bytes;
-                    note = lr.note + "; " + note;
+                    if (registered_prefix) {
+                        const hypercore::platform::LockResult lr =
+                            hypercore::platform::lock_resident((uint8_t*) base + registered_bytes, bytes - registered_bytes);
+                        locked_bytes = lr.locked_bytes;
+                        note = lr.note + "; " + note;
+                    } else {
+                        slice_bounds = bounds;
+                        uint64_t locked_total = 0;
+                        std::string why;
+                        for (size_t i = 0; i < slices; ++i) {
+                            if (registered[i]) continue;
+                            const hypercore::platform::LockResult lr = hypercore::platform::lock_resident(
+                                (uint8_t*) base + bounds[i], bounds[i + 1] - bounds[i]);
+                            locked_total += lr.locked_bytes;
+                            if (why.empty() && !lr.note.empty()) why = lr.note;
+                        }
+                        // The bounds stop at the last expert byte; an arena is sized with one blob of padding past
+                        // them so a whole-slot copy may start at any expert. The prefix path locked that tail along
+                        // with the unregistered slices, so the scattered path has to lock it by hand - recorded as
+                        // one more slice so the destructor can undo it the same way.
+                        if (bounds.back() < bytes) {
+                            slice_bounds.push_back(bytes);
+                            const hypercore::platform::LockResult lr =
+                                hypercore::platform::lock_resident((uint8_t*) base + bounds.back(), bytes - bounds.back());
+                            locked_total += lr.locked_bytes;
+                            if (why.empty() && !lr.note.empty()) why = lr.note;
+                        }
+                        locked_bytes = locked_total;
+                        note = (locked_total ? "locked the unregistered slices: " + why : why) + "; " + note;
+                    }
                 }
             }
         } else {
@@ -469,6 +539,10 @@ PinnedArena::PinnedArena(uint64_t bytes, const std::vector<uint64_t>& bounds, De
 void PinnedArena::register_slices(std::atomic<int>& ready) {
     const int n = (int) bounds_.size() - 1;
     int i = 0;
+    // #634: the per-slice flags are what `pinned()` and `device_alias()` ask, and a deferred registration is a
+    // prefix in arena order. Without them an empty `registered` reads as "nothing is pinned" to a caller that
+    // indexes by slice, so the flags are filled here too.
+    registered.assign((size_t) n, 0);
     for (; base != nullptr && i < n; ++i) {
         const uint64_t off = bounds_[(size_t) i], len = bounds_[(size_t) i + 1] - off;
         if (cudaHostRegister((uint8_t*) base + off, (size_t) len, cudaHostRegisterPortable | cudaHostRegisterMapped) !=
@@ -477,6 +551,7 @@ void PinnedArena::register_slices(std::atomic<int>& ready) {
             break;
         }
         slice_starts.push_back(off);
+        registered[(size_t) i] = 1;
         registered_bytes = off + len;
         ++registered_slices;
         ready.store(i + 1, std::memory_order_release);
@@ -499,7 +574,16 @@ void PinnedArena::register_slices(std::atomic<int>& ready) {
 
 PinnedArena::~PinnedArena() {
     if (base) {
-        if (locked_bytes) hypercore::platform::unlock_resident((uint8_t*) base + (slice_bytes ? registered_bytes : 0), locked_bytes);
+        if (locked_bytes) {
+            if (slice_bounds.empty()) {
+                hypercore::platform::unlock_resident((uint8_t*) base + registered_bytes, locked_bytes);
+            } else {
+                for (size_t i = 0; i + 1 < slice_bounds.size(); ++i)
+                    if (!slice_registered(i))
+                        hypercore::platform::unlock_resident((uint8_t*) base + slice_bounds[i],
+                                                            slice_bounds[i + 1] - slice_bounds[i]);
+            }
+        }
         if (slice_bytes) {
             for (uint64_t off : slice_starts) cudaHostUnregister((uint8_t*) base + off);
         } else {

@@ -191,6 +191,35 @@ class StreamReaderTest(unittest.TestCase):
         finally:
             sup.stop()
 
+    def test_the_ack_wall_is_not_the_stream_wall(self):
+        """A prompt that takes longer to read than the handshake timeout still completes:
+        the silence wall comes from the supervisor (the config's "engine_silence_s"),
+        not from the 30 s the worker is given to bind its socket."""
+        worker = ScriptedWorker(tokens=3, prefill_s=0.6)
+        sup = HyperCoreProcessSupervisor(transport=worker.connect, max_restarts=0, silence_s=1.0)
+        sup.start()
+        try:
+            self.assertEqual(sup.silence_s, 1.0)
+            frames = list(sup.stream([1, 2, 3, 4], max_new_tokens=3, timeout_s=0.2))
+            self.assertEqual(len(frames), 4)                              # 3 tokens + the terminal
+        except StreamStalled as e:
+            self.fail(f"a prefill longer than the ack wall stalled the stream: {e}")
+        finally:
+            sup.stop()
+
+    def test_no_silence_wall_waits_as_long_as_the_request_needs(self):
+        """"engine_silence_s": 0 means wait, as the documentation says."""
+        worker = ScriptedWorker(tokens=1, prefill_s=0.4)
+        sup = HyperCoreProcessSupervisor(transport=worker.connect, max_restarts=0, silence_s=0.0)
+        sup.start()
+        try:
+            frames = list(sup.stream([1, 2], max_new_tokens=1, timeout_s=0.2))
+            self.assertEqual(len(frames), 2)
+        except StreamStalled as e:
+            self.fail(f"a request with no silence wall was cut off: {e}")
+        finally:
+            sup.stop()
+
     def test_busy_rejected_and_stalled_are_distinguishable_to_the_http_layer(self):
         self.assertTrue(issubclass(WorkerBusy, WorkerRejected.__bases__[0]))
         self.assertTrue(issubclass(StreamStalled, Exception))

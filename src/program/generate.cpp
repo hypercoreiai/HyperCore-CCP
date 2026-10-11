@@ -3745,8 +3745,30 @@ int main(int argc, char** argv) {
         else if (pin_wddm_cap)
             std::fprintf(stderr, "hypercore generate: multi-GPU under WDDM: at most 8 GiB of the expert arena is pinned "
                                  "(HYPERCORE_ARENA_PIN_GIB changes it)\n");
+        // #1: the pin follows the heat, not the file - when the profile says the heat is anywhere but flat.
+        // A capped registration - or a driver that refuses the whole range - goes slice by slice, and in arena
+        // order that locks layers 0..k: the FIRST layers, which need not be the routed ones. `--expert-profile`
+        // ranks the (layer, expert) pairs by how often they are actually routed, so when one is given the
+        // registration goes hottest layer first and the cold layers keep only the working-set lock. No profile,
+        // no order: exactly the old behaviour. `hot_layer_order` returns empty for a flat profile, so on models
+        // whose routing is uniform across layers (Qwen3.8-Flash: 1.155 vs 0.831 of the mean, a 1.6% best-prefix
+        // gain) this whole path is a no-op by design rather than by omission.
+        // HYPERCORE_PIN_ORDER=0 turns it off: the control arm of the A/B, and the escape hatch for a profile
+        // built on a different workload than the one being run - a coder profile on a chat trace ranks the wrong
+        // layers, and pinning those is worse than pinning the first k.
+        const char* pin_order_env = std::getenv("HYPERCORE_PIN_ORDER");
+        const bool pin_by_heat = pin_order_env == nullptr || (pin_order_env[0] != '0' && pin_order_env[0] != '\0');
+        const std::vector<uint64_t> pin_order =
+            pin_by_heat ? hypercore::core::hot_layer_order(profile, g.n_layers, g.n_expert) : std::vector<uint64_t>{};
+        if (!pin_order.empty())
+            std::fprintf(stderr, "hypercore generate: expert arena registration ordered by %s: %zu layers, hottest first "
+                                 "(a capped pin then covers the read layers, not layers 0..k)\n",
+                         o.expert_profile.c_str(), pin_order.size());
+        else if (!pin_by_heat && !profile.empty())
+            std::fprintf(stderr, "hypercore generate: HYPERCORE_PIN_ORDER=0: the expert arena is registered in "
+                                 "arena order (layers 0..k), not by the profile's heat\n");
         if (!arena_src.open(o.pack, g.n_layers, g.n_expert, /*threads=*/6, err, pin_limit,
-                            o.shared_expert_arena)) {
+                            o.shared_expert_arena, pin_order)) {
             std::fprintf(stderr, "hypercore generate: %s\n", err.c_str());
             return 1;
         }
@@ -7179,7 +7201,20 @@ int main(int argc, char** argv) {
                     slots_all += remote_experts[(size_t) r].resident();
                     mib_all += (int64_t) (remote_experts[(size_t) r].gib() * 1024.0);
                 }
+            // #Monitor: what the tier WAS sized for, alongside what it holds now. A cache that has
+            // been shrunk to keep the VRAM reserve reports both, so "1200 of 3700 slots" is a fact
+            // the reader can act on instead of a number that looks like a bug.
+            int64_t full_slots_all = xcache.full_slots(), full_mib_all = (int64_t) (xcache.full_bytes() >> 20);
+            for (const auto& st : stages) {
+                full_slots_all += (int64_t) st->cache.full_slots();
+                full_mib_all += (int64_t) (st->cache.full_bytes() >> 20);
+            }
+            // How the host side holds the experts, in the words the Monitor uses. The engine's own
+            // flags decide it; no slots means there is no tier at all.
+            const int expert_source = slots_all <= 0 ? 0
+                : (o.resident_cpu_experts ? 3 : (o.mmap_experts ? 1 : 2));
             std::printf("INFO context=%lld kv=%s kv_resident=%lld expert_slots=%lld expert_cache_mib=%lld "
+                        "expert_source=%d expert_slots_full=%lld expert_cache_full_mib=%lld "
                         "expert_slots_primary=%lld expert_cache_primary_mib=%lld spec=%d "
                         "mtp_max=%d lookup=%d vram_free_mib=%lld cvec=%s arena_mib=%lld pool_workers=%d pcie_frac=%.2f "
                         "spec_min_p=%.2f conversation_cache_mib=%lld conversation_cache_slots=%d "
@@ -7188,6 +7223,7 @@ int main(int argc, char** argv) {
                         (long long) (g.n_qsa_layers() > 0 && ss.qsa_states[ss.qsa_primary()].kv_mode == 1
                                          ? ss.qsa_states[ss.qsa_primary()].n_slots * 4 : 0),
                         (long long) slots_all, (long long) mib_all,
+                        expert_source, (long long) full_slots_all, (long long) full_mib_all,
                         (long long) slots_primary, (long long) mib_primary,
                         o.spec, o.mtp_max_t,
                         o.suffix_draft, (long long) (free_b >> 20), cvec_summary.c_str(),

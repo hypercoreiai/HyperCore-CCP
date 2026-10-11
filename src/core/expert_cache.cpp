@@ -198,6 +198,48 @@ bool write_expert_profile(const std::string& path, int64_t n_layers, int64_t n_e
     return true;
 }
 
+
+// #1: which layers the host arena's page-lock should cover. The registration slices are one per layer, so a
+// capped pin in arena order locks layers 0..k - the first layers, not the read ones. The profile's ranking is
+// per (layer, expert); summing each pair's rank into its layer gives the layers in the order the run reads
+// them. Ties keep arena order (stable_sort on a strict `>`), so a layer the profile never mentions stays where
+// it was, and an empty profile returns an empty order: the caller then registers exactly as before.
+std::vector<uint64_t> hot_layer_order(const std::vector<std::pair<int32_t, int32_t>>& ranked,
+                                      int64_t n_layers, int64_t n_expert) {
+    if (n_layers <= 0 || n_expert <= 0 || ranked.empty()) return {};
+    std::vector<double> weight((size_t) n_layers, 0.0);
+    for (size_t r = 0; r < ranked.size(); ++r) {
+        const int32_t l = ranked[r].first;
+        if (l < 0 || l >= n_layers) continue;
+        // rank 0 is the hottest pair; the weight is its distance from the end of the list, so a longer profile
+        // changes the magnitudes but never the order
+        weight[(size_t) l] += (double) (ranked.size() - r);
+    }
+    std::vector<uint64_t> order((size_t) n_layers);
+    for (int64_t l = 0; l < n_layers; ++l) order[(size_t) l] = (uint64_t) l;
+    std::stable_sort(order.begin(), order.end(), [&](uint64_t a, uint64_t b) {
+        return weight[(size_t) a] > weight[(size_t) b];
+    });
+
+    // A guard, not a preference.  A capped pin covers a fixed number of bytes, so the value of the order is how
+    // much more of the routed heat the covered layers hold than the arena prefix would - measured at every
+    // prefix length, since the cap is not known here.  When that is a couple of percent the profile is flat and
+    // the order is noise: data/expert-profile.bin (48 layers, 512 experts) is exactly that - its layers carry
+    // 1.155 vs 0.831 of the mean, and the best prefix the order can build is 1.6% better than layers 0..k.
+    // Returning an empty order then keeps the contiguous tail lock and the pin the engine already had.
+    double total = 0.0;
+    for (double w : weight) total += w;
+    if (total <= 0.0) return {};
+    double arena_prefix = 0.0, heat_prefix = 0.0, best_gain = 0.0;
+    for (int64_t k = 0; k < n_layers; ++k) {
+        arena_prefix += weight[(size_t) k];
+        heat_prefix  += weight[order[(size_t) k]];
+        if (heat_prefix - arena_prefix > best_gain) best_gain = heat_prefix - arena_prefix;
+    }
+    if (best_gain / total < PIN_ORDER_MIN_GAIN) return {};
+    return order;
+}
+
 ExpertCache::~ExpertCache() { close(); }
 
 // ---- #533: the segmented arena (--vram-elastic).  The driver API's virtual memory functions, looked up through the

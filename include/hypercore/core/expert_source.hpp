@@ -708,8 +708,11 @@ public:
 
     /// Allocates and loads `<pack_dir>/experts.bin`.  Prints nothing; the caller reports `note()` and the load
     /// rate, because those are the two numbers that say whether the arena is the one that was asked for.
+    /// `register_order`: slice indices in the order to page-lock them (hottest layer first). Empty keeps the
+    /// arena-order prefix pin.
     bool open(const std::string& pack_dir, int64_t n_layers, int64_t n_expert, int threads, std::string& err,
-              uint64_t max_pinned_bytes = 0, const std::string& shared_arena_file = {});
+              uint64_t max_pinned_bytes = 0, const std::string& shared_arena_file = {},
+              const std::vector<uint64_t>& register_order = {});
     /// Plan v0.3 P6: a native pack without experts.bin takes its experts from the model's GGUF: `native` is the
     /// --native shard, and native_experts.txt names the other shards beside it (per layer, or per role in v4).
     void set_gguf(const std::string& native) { gguf_ = native; }
@@ -742,6 +745,7 @@ private:
     void* map_ = nullptr;            ///< HYPERCORE_ARENA_MMAP: the arena file, mapped read-only (not the PinnedArena)
     uint64_t map_bytes_ = 0;
     std::vector<const uint8_t*> dev_slice_;   ///< device alias of each registered slice (or of the whole range)
+    std::vector<uint8_t> slice_registered_;   ///< which slice (layer) CUDA took; empty = the whole arena
     uint64_t slice_bytes_ = 0;
     const uint8_t* base_ = nullptr;
     int64_t blobs_ = 0;

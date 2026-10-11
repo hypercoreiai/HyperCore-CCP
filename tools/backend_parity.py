@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import sys
 from dataclasses import dataclass, field
@@ -173,6 +174,17 @@ def compare(a: Snapshot, b: Snapshot) -> list[str]:
     return problems
 
 
+def parity_socket_path(backend: str, attempt: int) -> str:
+    """A socket name private to this process and this attempt.
+
+    The name is not reusable: a worker's socket file stays in /tmp after the process exits,
+    and a second run on the same name finds a file it cannot bind over. The pid makes the
+    path safe for two jobs sharing one runner - a CI matrix, or a local build and a CI build
+    on the same machine - which is the case a fixed path cannot survive.
+    """
+    return f"/tmp/hypercore_parity_{backend}_{attempt}-{os.getpid()}.sock"
+
+
 def run(
     wanted: list[str],
     require: list[str],
@@ -188,7 +200,7 @@ def run(
             continue
         snapshots: list[Snapshot] = []
         for attempt in range(repeats):
-            socket_path = f"/tmp/hypercore_parity_{backend}_{attempt}.sock"
+            socket_path = parity_socket_path(backend, attempt)
             if transport_factory is not None:
                 sup = HyperCoreProcessSupervisor(transport=transport_factory())
             else:

@@ -1,12 +1,14 @@
 """serve/prompts.py - the agent prompts the web app offers, read from prompt.json.
 
-`prompt.json` beside the server is one JSON object: a `system_prompt` that every chat starts with, and
-one entry per agent after it (`expert_coding_agent`, `expert_research_agent`, ...). `GET /prompts` hands
-that list to the web app, which builds its agent dropdown from it - so adding a profile to the file adds a
-choice to the menu with nothing to change in the page or in the code. A profile is any top-level entry; its
-text is the entry rendered as Markdown, and the name shown in the menu is its `agent_profile.name` when it
-has one, else the key written out. A key starting with `_` is not a profile: it is where the file keeps its
-own notes and version.
+`find_prompt_file(ROOT)` is where the server gets its file: `prompt.json` beside the server, or the one
+in the `prompts/` folder beside it, which is where this repo ships it. Either way the file is one JSON
+object: a `system_prompt` that every chat starts with, and one entry per agent after it
+(`expert_coding_agent`, `expert_research_agent`, ...). `GET /prompts` hands that list to the web app,
+which builds its agent dropdown from it - so adding a profile to the file adds a choice to the menu with
+nothing to change in the page or in the code. A profile is any top-level entry; its text is the entry
+rendered as Markdown, and the name shown in the menu is its `agent_profile.name` when it has one, else the
+key written out. A key starting with `_` is not a profile: it is where the file keeps its own notes and
+version.
 
 A profile may use `{{current_date}}`, `{{current_year}}` and `{{current_month}}`. They are filled from the
 server clock when the prompt is rendered, so a profile never hard-codes a year that goes stale.
@@ -23,6 +25,8 @@ from pathlib import Path
 
 SYSTEM_KEY = "system_prompt"
 MAX_PROMPT_CHARS = 20_000        # a profile longer than this is sent cut off, not whole, to the model
+PROMPT_FILE = "prompt.json"
+PROMPT_PLACES = ("", "prompts")  # beside the server first (where a user keeps their own), then prompts/
 
 # Filled from the server clock at render time. A profile that needs today's date writes the token
 # instead of a year, so it stays correct when the year changes; the catalog is re-rendered when the
@@ -106,6 +110,21 @@ def _catalog_from(data: object, path: str) -> dict:
             "prompt": render_prompt(value),
         })
     return {"path": path, "system": render_prompt(data.get(SYSTEM_KEY)), "agents": agents}
+
+
+def find_prompt_file(root: Path | str) -> str:
+    """The prompt.json this server reads: the first of the places it is kept that has one.
+
+    A file beside the server wins over the one in `prompts/`, so a profile set kept next to the server is
+    not silently replaced by the shipped one. With neither, the path beside the server is returned, and
+    `catalog` reports it as missing rather than guessing.
+    """
+    root = Path(root)
+    for place in PROMPT_PLACES:
+        p = root / place / PROMPT_FILE if place else root / PROMPT_FILE
+        if p.is_file():
+            return str(p)
+    return str(root / PROMPT_FILE)
 
 
 def catalog(path: Path | str) -> dict:

@@ -245,7 +245,7 @@ def main() -> int:
         spawn = [sys.executable, str(args.server),
                  "--port", str(args.port),
                  "--worker", args.worker,
-                 "--ipc-socket", f"/tmp/hypercore-flood-{args.port}.sock",
+                 "--ipc-socket", f"/tmp/hypercore-flood-{args.port}-{os.getpid()}.sock",
                  "--config", config]
         if args.api_key:
             spawn += ["--api-key", args.api_key]

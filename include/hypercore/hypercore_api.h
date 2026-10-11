@@ -87,6 +87,21 @@ typedef struct hypercore_engine_t hypercore_engine_t;
  * read-only snapshot, not a request: a caller that wants to know what the engine is running
  * with must not have to submit a probe request to find out. A value of -1.0f here means the
  * instance was never given one, i.e. the engine decides per request. */
+/* The expert tier, appended at the end (#Monitor).
+ *
+ * These are the numbers the engine already computes when it sizes the VRAM expert cache, and
+ * until now they only ever reached a human through the engine's startup text. A Monitor tab
+ * that cannot see them shows "-" for "Experts in VRAM" on a machine that has a cache, which
+ * reads as a missing feature rather than a missing wire field.
+ *
+ * expert_slots is what the cache holds NOW; expert_slots_full is what it was sized for. They
+ * differ whenever the VRAM reserve shrinks during a run, and reporting only one of them is how
+ * a monitor ends up four times wrong on a multi-GPU config.
+ *
+ * expert_source names how the host-side experts are held, because the two arrangements have
+ * completely different failure modes and the same-looking "0 experts" line: 0 = none, 1 = the
+ * pack's experts.bin mapped read-only (--mmap-experts), 2 = the arena copy, 3 = resident in
+ * page-locked RAM (--resident-experts). */
 typedef struct hypercore_caps_t {
     uint32_t struct_size;
     uint32_t backend_type;           /* 0 = cpu, 1 = cuda, 2 = hip */
@@ -95,10 +110,17 @@ typedef struct hypercore_caps_t {
     int32_t  active_pool_workers;    /* cores the pool is actually configured for */
     float    instance_pcie_frac;     /* resolved Level-1 baseline, or -1.0f if unset */
     float    instance_spec_min_p;    /* resolved Level-1 baseline, or -1.0f if unset */
+    uint32_t expert_slots;           /* VRAM expert-cache slots in use */
+    uint32_t expert_slots_full;      /* slots the cache was sized for */
+    uint32_t expert_cache_mib;       /* MiB of VRAM the expert cache holds now */
+    uint32_t expert_cache_full_mib;  /* MiB it would hold at full size */
+    uint32_t vram_free_mib;          /* free VRAM at the moment the tier was sized */
+    uint32_t expert_source;          /* 0 none, 1 mmap, 2 arena, 3 resident RAM */
+    uint32_t prompt_chunk;           /* tokens per prompt chunk */
 } hypercore_caps_t;
 
-/* Written once, in the terminal chunk of a stream. Exactly 40 bytes; the absolute byte
- * offsets below are frozen for every embedder.
+/* Written once, in the terminal chunk of a stream. The first 40 bytes are the frozen
+ * core; the absolute byte offsets below are locked for every embedder.
  *
  * The three timings decompose, and only because they start at different instants:
  *
@@ -124,6 +146,13 @@ typedef struct hypercore_caps_t {
  * greater than or equal to what it understands. It reads the prefix it knows and
  * discards the tail. An appended field therefore never breaks an older caller; a
  * removed one would.
+ *
+ * The block below the 40-byte prefix is the decode's expert-tier accounting (#Monitor).
+ * It is per-request, not cumulative: cache_hits/cache_lookups are the hits and lookups of
+ * THIS request, exactly as the engine's own "decode expert cache hit rate" line reports them.
+ * A reader that does not know these fields reads a 40-byte summary and is unaffected.
+ * A field the worker did not fill is 0 here and reported as None by the reader, never as a
+ * measured zero - see decode_terminal in serve/ipc_parser.py.
  */
 typedef struct hypercore_request_summary_t {
     uint32_t             struct_size;          /* 0-3   protocol version tag */
@@ -135,6 +164,13 @@ typedef struct hypercore_request_summary_t {
     hypercore_stop_reason_t stop_reason;       /* 32-35 */
     uint32_t             time_to_first_token_ms; /* 36-39 replaces the reserved padding;
                                                  the 40-byte footprint does not change */
+    uint32_t             cache_hits;           /* 40-43 decode lookups already in the VRAM tier */
+    uint32_t             cache_lookups;        /* 44-47 decode lookups in that tier in total */
+    uint32_t             offloaded;            /* 48-51 routed experts read over PCIe or by another GPU */
+    uint32_t             prompt_read;          /* 52-55 prompt tokens this request actually read (#471) */
+    uint32_t             ram_blobs;            /* 56-59 expert blobs served from resident RAM */
+    uint32_t             file_blobs;           /* 60-63 expert blobs read from the pack files */
+    uint32_t             file_kb;              /* 64-67 kilobytes those reads cost */
 } hypercore_request_summary_t;
 
 /* Per-request generation settings. -1.0f on a tuning field means "use what the engine

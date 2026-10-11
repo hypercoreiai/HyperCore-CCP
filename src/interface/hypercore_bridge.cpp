@@ -360,8 +360,8 @@ static void worker_read_loop(hypercore::EngineContext* ctx) {
             hypercore_request_summary_t summary;
             memcpy(&summary, payload.data() + 4, sizeof summary);
             chunk.summary = &summary;   /* valid only for this call, exactly as in-process mode */
-            chunk.token_id = 0;
-            chunk.prompt_reused = 0;
+            chunk.token_id = -1;
+            memcpy(&chunk.prompt_reused, payload.data(), sizeof chunk.prompt_reused);
             cb(&chunk, user_data);
             ctx->active.fetch_sub(1);
         }
@@ -545,6 +545,22 @@ HYPERCORE_API hypercore_status_t hypercore_engine_get_caps(const hypercore_engin
     full.instance_pcie_frac    = engine->ctx.options.pcie_frac;
     full.instance_spec_min_p   = engine->ctx.options.spec_min_p;
 
+    /* The expert tier, as the engine described it when it sized it (#Monitor). Until now these
+       numbers only existed in the engine's startup text, so a Monitor tab reading CAPS had no
+       way to say how many experts are in VRAM on a machine that has them.
+
+       A model that never printed a tier line reports zeros, and the caller distinguishes "no
+       expert cache" from "the numbers were not available" with has_expert_tier(). */
+    if (engine->ctx.model.alive()) {
+        full.expert_slots           = (uint32_t) engine->ctx.model.expert_slots();
+        full.expert_slots_full      = (uint32_t) engine->ctx.model.expert_slots_full();
+        full.expert_cache_mib       = (uint32_t) engine->ctx.model.expert_cache_mib();
+        full.expert_cache_full_mib  = (uint32_t) engine->ctx.model.expert_cache_full_mib();
+        full.vram_free_mib          = (uint32_t) engine->ctx.model.vram_free_mib();
+        full.expert_source          = (uint32_t) engine->ctx.model.expert_source();
+        full.prompt_chunk           = (uint32_t) engine->ctx.model.prompt_chunk();
+    }
+
     memcpy(out_caps, &full, out_caps->struct_size);
     return HYPERCORE_STATUS_SUCCESS;
 }
@@ -572,6 +588,24 @@ static void release_slot(hypercore_engine_t* engine, hypercore::RequestState* st
     engine->ctx.active.fetch_sub(1);
 }
 
+/* The terminal frame carries prompt_reused beside the summary. The engine reports it on its
+   token frames and its DONE line, but the summary struct itself does not own it. Wrapping the
+   callback records the last value the engine sent, so the terminal frame can carry it without
+   changing the frozen summary layout. */
+struct ReuseTrackingSink {
+    hypercore_stream_cb cb;
+    void* user_data;
+    uint32_t reused;
+};
+
+static void reuse_tracking_cb(const hypercore_output_chunk_t* chunk, void* user_data) {
+    ReuseTrackingSink* sink = static_cast<ReuseTrackingSink*>(user_data);
+    if (chunk->token_id >= 0 && chunk->prompt_reused > sink->reused) {
+        sink->reused = chunk->prompt_reused;
+    }
+    sink->cb(chunk, sink->user_data);
+}
+
 /* A real model is attached: the tokens and every number in the summary come from the engine
    process. Nothing here invents a duration - prefill_ms and decode_ms are the engine's own
    measurements, read from its DONE line. */
@@ -585,8 +619,9 @@ static void run_request_through_engine(hypercore_engine_t* engine,
     memset(&summary, 0, sizeof summary);
     summary.struct_size = sizeof summary;
 
+    ReuseTrackingSink sink{callback, user_data, 0};
     std::string err;
-    bool ok = engine->ctx.model.run(prompt, cfg.max_new_tokens, callback, user_data, summary, err);
+    bool ok = engine->ctx.model.run(prompt, cfg.max_new_tokens, reuse_tracking_cb, &sink, summary, err);
     if (!ok) {
         /* The engine died or refused the request. A terminal frame is still required: without
            one the caller waits for a stream that will never end, and the slot is never freed. */
@@ -601,6 +636,7 @@ static void run_request_through_engine(hypercore_engine_t* engine,
     hypercore_output_chunk_t terminal;
     memset(&terminal, 0, sizeof terminal);
     terminal.token_id = -1;
+    terminal.prompt_reused = sink.reused;
     terminal.summary = &summary;
     callback(&terminal, user_data);
     release_slot(engine, state);
@@ -715,6 +751,7 @@ static void run_request(hypercore_engine_t* engine,
     hypercore_output_chunk_t terminal;
     memset(&terminal, 0, sizeof terminal);
     terminal.token_id = -1;
+    terminal.prompt_reused = reused;
     terminal.summary = &summary;
     callback(&terminal, user_data);
 

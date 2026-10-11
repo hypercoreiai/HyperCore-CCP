@@ -588,6 +588,22 @@ print(r.choices[0].message.content)
   `"recover"` needs the exact xhigh sentence in the first system message and skips requests with images; re-reading
   the changed prefix costs prompt time. Either mode can mistake repeated useful code or checks for a loop, so keep
   the recorded answer quality alongside the completion rate when testing it.
+- **A turn is asked whether its work is finished (`"turn_tail_check"`, on by default).** On `/v1/chat/completions`,
+  `/v1/messages` and `/v1/responses`, when a turn would end the server appends one short turn asking the model to
+  check its answer against the request and reply `done` if every task is complete. A bare confirmation ends the turn;
+  a "no", or the model going on with the work, keeps the turn open and asks again, up to `"turn_tail_checks"` times
+  (3 by default). The question and a bare confirmation are never shown to the client, and every round's tokens are
+  counted in the request's usage. A turn that ends on a length stop, a cancel, a forced tool call, or with no text at
+  all is not checked. `--turn-tail-check` on the command line is the same as `"turn_tail_check": true` in
+  `hypercore-<model>.json`; `"turn_tail_prompt"` replaces the question. Each check is another read of the
+  conversation, so it costs prompt time: it is for agent turns that stop early, not for a chat that is already
+  finishing.
+- **What setup writes into a new run config.** `hypercore-<model>.json` from `setup.sh`/`setup.py` carries
+  `"host": "0.0.0.0"`, `"api_key": "0000"` and `"turn_tail_check": true`, and `run-<model>.sh`/`.bat` passes
+  `--turn-tail-check`. `--host`, `--api-key` and `--no-turn-tail-check` change them, and a model whose config
+  already has one keeps it: the defaults are only filled in when the key is absent. A config written by an older
+  setup gets them on its next start. The chat page served by that server reads the key from the page itself, so it
+  does not have to be typed into Settings.
 - **Changing the effort without re-reading the prompt (opt-in, 0.1.39, #458).** The effort's instruction is the
   first thing in the prompt, so a request that only changes the effort (an agent's "think harder" switch, `none` for
   a quick tool step) reads the whole conversation again. `"effort_position": "end"` in `hypercore-<model>.json` renders
@@ -662,7 +678,8 @@ print(r.choices[0].message.content)
   `--alias`; a request naming one is answered under that name. Any other name is still served, as before.
 - **Model settings in the web page (0.1.39, #564).** The About tab's Model settings card shows and changes a few of
   the keys above in `hypercore-<model>.json`: the `sampling` defaults (temperature, top_p, top_k, min_p),
-  `reasoning_budget_tokens`, `fit_max_tokens`, `anthropic_thinking`, `effort_position`, `aliases`, `idle_unload_s`,
+  `reasoning_budget_tokens`, `fit_max_tokens`, `anthropic_thinking`, `effort_position`, `turn_tail_check`,
+  `turn_tail_checks`, `aliases`, `idle_unload_s`,
   `lazy_load`, `engine_silence_s`, `api_monitor`, `open_browser` and `--vram-reserve-mib`. An empty field removes the
   key (its default). Every other key of the file stays as it is, the earlier file is kept as
   `hypercore-<model>.json.bak`, and the model uses the change from its next start. Only HyperCore's own page can save
@@ -1226,7 +1243,7 @@ the document, +0.4% on the chat. Details: `bench/results/2026-09-27-esp/`.
 | A request never finishes: "reading the prompt", GPU "100%" at low power | The GPU ran out of VRAM (engines before 0.1.9 could end with ~30 MiB free at large contexts). Run `START-HERE.bat` once to get engine 0.1.9 or newer; the log then says `... MiB of VRAM free with everything loaded` (a few hundred) and names the `--vram-reserve-mib` to add if it is low. |
 | Generation stops mid-answer, GPU "100%", one CPU core busy | Fixed in engine 0.1.12 (issue #29, a race in the CPU expert pool on big-VRAM cards). Since then a request that stops moving ends with an error instead of hanging (after 2 minutes; 1 minute from 0.1.13): the log says `no progress for ... s ... (issue #29)` with where it stopped, and the next request starts the engine again. If you see that line, please open an issue with it. Engine 0.1.13 adds a stall report under it (what every expert-pool thread and the GPU handshake were doing, memory and page faults) and, on Windows, a `hypercore-stall-<pid>.dmp` file with every thread's stack: attach both. (`HYPERCORE_WATCHDOG_S` sets the time in seconds; 0 turns it off.) Engine 0.1.14 fixes the stall those reports found (issue #31: with the IQ packs the host could wait forever inside the NVIDIA driver while copying experts in a verify window; the experts are now copied by a GPU kernel, `--pcie-mode dma` restores the old way). |
 | `no progress for 60 s ... reading the prompt` on Linux, and the stall report says `threads waiting on the disk (state D): 16 ...` | The engine waits for the drive, not a deadlock: the n-gram table is read at random (`--ple-io direct`), which a rotational disk cannot keep up with (#605). The engine warns at start when the table is on one; `--ple-io ram` (Linux, needs RAM for the table) or the model on an SSD fixes it. Setup adds `--ple-io ram` itself on a rotational disk when the RAM holds the table (0.1.39). |
-| `the engine said nothing for ... s during the request` or `... did not finish the request after it was stopped (STOP)` | Issue #481: the engine and the server lost step (the engine waits for its next command, the server for the request's end; GPU at 0 %, nothing in the log). The server ends the engine after 300 s without a line from it during a request (while a prompt is read: each chunk may take three times the previous one's time, the first one up to its tokens at 50 tok/s more), the request ends with an error and the next request starts the engine again. `"engine_silence_s": 600` in `hypercore-<model>.json` sets the time (0 = wait forever, as before). If you see it, please add the end of the engine log to #481. |
+| `the engine said nothing for ... s during the request` or `... did not finish the request after it was stopped (STOP)` | Issue #481: the engine and the server lost step (the engine waits for its next command, the server for the request's end; GPU at 0 %, nothing in the log). The server ends the engine after 300 s without a line from it during a request (while a prompt is read: each chunk may take three times the previous one's time, the first one up to its tokens at 50 tok/s more), the request ends with an error and the next request starts the engine again. `"engine_silence_s": 600` in `hypercore-<model>.json` sets the time (0 = wait forever, as before). The same wall governs the worker's frame stream: the 30 s a worker is given to answer a submit is not the stream's wall, so a six-figure prompt that takes 31 s to read is not called stalled. If you see it, please add the end of the engine log to #481. |
 | `out of memory: cudaFuncSetAttribute` in the log (IQ3_XXS, long prompt) | Fixed in engine 0.1.15: CUDA loaded a kernel's code when it was first needed, and mid-prompt there was no VRAM left for it. Run `START-HERE.bat` (Windows) or `./setup.sh` (Linux) once to update. |
 | Anything else | The engine log is `hypercore-<model>.log` in this folder. |
 

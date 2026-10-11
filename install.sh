@@ -194,7 +194,7 @@ stage_supervisor_tests() {
   step "supervisor suites (slots, cancel, recovery, config forms, stream loop, auth)" \
     "$PY" -m unittest serve.test_abi_contract serve.test_slots serve.test_control_cancel \
                   serve.test_fatal_recovery serve.test_config_forms serve.test_stream_loop \
-                  serve.test_http_auth || return 1
+                  serve.test_http_auth serve.test_socket_hygiene || return 1
   # Integration guard: the stub needs no GPU and no weights, so the 503 gate, the
   # drop-mid-stream slot reclaim and the stall cancel are exercised on every merge.
   step "integration guard: stub flood behind the API key" \

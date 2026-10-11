@@ -25,8 +25,9 @@ Options: --family qwen|swift, --model Q2_0|IQ2_XS|IQ3_XXS|IQ3_S, --context 32768
 at least 1 - an explicit --rope-scaling none is refused for such a context), --vision yes|no|gpu|cpu, --port
 8080, --yes (recommended
 answers, no questions), --setup (install another model / change settings instead of starting), --no-start,
---host 0.0.0.0 --api-key KEY (reach it from other devices on your network), --experimental-speed-projection on|off
-(EXPERIMENTAL, off by default),
+--host 0.0.0.0 --api-key KEY (a new install listens on 0.0.0.0 and answers to the key 0000 by default; these
+change it), --no-turn-tail-check (end a turn as it is, without asking whether the work is done),
+--experimental-speed-projection on|off (EXPERIMENTAL, off by default),
 --models-dir DIR, --gguf-dir DIR (use GGUF files you already have), --build (compile instead of the ready-made
 engine), --check (only check this PC), --resident-budget-gib N (UD-Q4_K_XL's or UD-IQ4_XS's experts in RAM),
 --kv-streaming on|off|auto.
@@ -156,6 +157,12 @@ def download_refusal(url: str, err):
 HF = hf("ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF")
 LLAMA_CPP_COMMIT = "3cf03257f219afbe7334045ff7c6a06ac68c627d"
 LLAMA_CPP_ZIP = f"https://github.com/ggml-org/llama.cpp/archive/{LLAMA_CPP_COMMIT}.zip"
+# What the unpacked checkout has to contain for the two builds that read it: ggml for the engine, gguf-py for the
+# pack tools, mtmd for the image encoder, and the build-info files llama.cpp's own CMakeLists.txt includes.
+# A folder that only partly arrived (a copy, an interrupted unpack) passes "is llama.cpp here" and then stops the
+# image encoder's configure with an error about a file setup never looked at.
+LLAMA_BUILD_FILES = ("ggml/CMakeLists.txt", "gguf-py/gguf/__init__.py", "tools/mtmd/mtmd.h",
+                     "cmake/build-info.cmake", "common/build-info.h", "common/build-info.cpp.in")
 
 # The ready-made engine: <PREBUILT_URL><asset>, a zip with hypercore(.exe), hypercore-vision(.exe) and BUILD.json, built
 # by tools/make_release.py.  Set this to the GitHub release download folder when publishing, e.g.
@@ -362,7 +369,7 @@ ESP_VECTOR = ROOT / "data" / "experimental-speed-projection" / "Qwen3.8-Flash-Ne
 # the image encoder on the GPU (~1.2 GB at 1024 image tokens) warms up before the engine starts, so the engine
 # sizes its expert slots around it and the default reserve (700 MiB) is enough; engines before 0.1.2 need more
 VISION_GPU_SMALL_RESERVE_MIB = 1000    # the tip for images on a <= 12 GB card (the engine's LOW line asked ~1003)
-VISION = {"gpu": {"max_tokens": 1024, "reserve_mib": 700},
+VISION = {"gpu": {"max_tokens": 1024, "reserve_mib": 1400},   # 865 MiB of BF16 mmproj tensors + the encoder's CUDA context and work buffers (docs/DETAILS.md: ~1.4 GB)
           "cpu": {"max_tokens": 300, "reserve_mib": 700}}
 EXE = "hypercore.exe" if WIN else "hypercore"
 VEXE = "hypercore-vision.exe" if WIN else "hypercore-vision"
@@ -1536,13 +1543,13 @@ def check_shards(shards):
                  f"delete {s.name} and its .done mark and run setup again")
 
 
-def get_llama_cpp():
-    """llama.cpp at the pinned commit (ggml for the build, gguf-py for the tools, mtmd for images), as a zip: no git."""
-    llama = ROOT / "third_party" / "llama.cpp"
-    if (llama / "ggml" / "CMakeLists.txt").exists() and (llama / "gguf-py").is_dir():
-        return llama
-    z = ROOT / "third_party" / f"llama.cpp-{LLAMA_CPP_COMMIT[:7]}.zip"
-    download(LLAMA_CPP_ZIP, z, "llama.cpp source")
+def llama_missing(llama: Path) -> list[str]:
+    """The build files a checkout does not have; empty when it is complete."""
+    return [f for f in LLAMA_BUILD_FILES if not (llama / f).is_file()]
+
+
+def unpack_llama(z: Path, llama: Path) -> None:
+    """The archive's files into third_party/llama.cpp, over whatever is there."""
     tmp = ROOT / "third_party" / "_unpack"
     shutil.rmtree(tmp, ignore_errors=True)
     with zipfile.ZipFile(z) as f:
@@ -1564,6 +1571,29 @@ def get_llama_cpp():
             shutil.rmtree(llama, ignore_errors=True)   # a partial copy from the failed attempt
             time.sleep(2)
     shutil.rmtree(tmp, ignore_errors=True)
+
+
+def get_llama_cpp():
+    """llama.cpp at the pinned commit (ggml for the build, gguf-py for the tools, mtmd for images), as a zip: no git.
+    A folder that only partly arrived is unpacked again from the archive rather than trusted: the engine builds from
+    ggml alone, so the gap only shows up when the image encoder is configured, as a CMake error about a file setup
+    never mentioned."""
+    llama = ROOT / "third_party" / "llama.cpp"
+    missing = llama_missing(llama)
+    if not missing:
+        return llama
+    z = ROOT / "third_party" / f"llama.cpp-{LLAMA_CPP_COMMIT[:7]}.zip"
+    if not (z.exists() and done(z)):
+        download(LLAMA_CPP_ZIP, z, "llama.cpp source")
+    if llama.is_dir():
+        say(f"  the llama.cpp checkout is short {', '.join(missing)}: unpacking it again")
+    unpack_llama(z, llama)
+    still = llama_missing(llama)
+    if still:
+        # the archive itself is short of it: the zip is kept, so the next run unpacks it without downloading
+        # 40 MB again, and setup stops naming the file instead of stopping at a CMake error three folders deep
+        fail(f"llama.cpp {LLAMA_CPP_COMMIT[:7]} has no {', '.join(still)}",
+             f"the archive unpacked into {llama} is short of it; put those files there and run setup again")
     z.unlink(missing_ok=True)
     z.with_name(z.name + ".done").unlink(missing_ok=True)
     return llama
@@ -3302,9 +3332,32 @@ def write_config(path: Path, cfg: dict):
 # #629: the run config's keys setup writes itself (and rewrites on every setup run); any other key is the user's - a
 # "sampling" or "mcp_servers" block, "allowed_hosts", "cors_origins", "open_browser" - and is kept when setup runs again
 SETUP_KEYS = frozenset({"exe", "args", "cwd", "tokenizer", "model_name", "log", "lib_dirs", "port", "backend", "env",
-                        "gpu", "gpus_asked", "layer_split", "host", "api_key", "draft_vocab", "vision"})
+                        "gpu", "gpus_asked", "layer_split", "host", "api_key", "draft_vocab", "vision",
+                        "turn_tail_check"})
 SETUP_ENV = frozenset({"HYPERCORE_HIPBLASLT_TUNING", "HYPERCORE_RESIDENT_PIN"})   # the "env" entries setup writes
 SETUP_VISION = frozenset({"exe", "mmproj", "model", "gpu", "max_tokens", "threads"})
+
+# What every run config setup writes when nothing says otherwise: a new install answers to the other devices on the
+# network (host 0.0.0.0) under a key, and the end-of-turn "is the work done?" check (docs/DETAILS.md,
+# "turn_tail_check") is on. --host / --api-key change them; a config that already has one keeps it.
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_API_KEY = "0000"
+DEFAULT_TURN_TAIL_CHECK = True
+SERVER_DEFAULTS = (("host", DEFAULT_HOST), ("api_key", DEFAULT_API_KEY),
+                   ("turn_tail_check", DEFAULT_TURN_TAIL_CHECK))
+
+
+def apply_server_defaults(cfg: dict, old: dict | None) -> None:
+    """host, api_key and turn_tail_check for a run config setup is about to write.
+
+    Precedence: what this run asked for (already in `cfg`), then what the model's own config had (`old`),
+    then the default. A key or an address someone set by hand is never replaced by the placeholder, and
+    `"turn_tail_check": false` stays off. `cfg` is updated in place.
+    """
+    prev = old if isinstance(old, dict) else {}
+    for key, default in SERVER_DEFAULTS:
+        value = cfg.get(key, prev.get(key))
+        cfg[key] = default if value is None else value
 
 
 def carry_over(old: dict, cfg: dict) -> list[str]:
@@ -3390,6 +3443,7 @@ def write_setup_config(cfg_path: Path, cfg: dict, source: Path | None = None) ->
         if not isinstance(old, dict):
             old = None
     kept = carry_over(old, cfg) if old is not None else []
+    apply_server_defaults(cfg, old)                          # a new install is reachable from the network, under a key
     bak = None
     if cfg_path.is_file() and old != cfg:
         bak = cfg_path.with_name(cfg_path.name + ".bak")
@@ -3713,6 +3767,12 @@ def start(cfg_path: Path, port: int | None, gpu: int | list | None = None, open_
     """keep: settings given on this start that the model keeps from now on (--host, --api-key, --draft-vocab,
     --vram-reserve-mib)."""
     cfg = upgrade_config(cfg_path, json.loads(cfg_path.read_text(encoding="utf-8-sig")))
+    before = dict(cfg)                                   # #...: a config written before the host/key/turn-check
+    apply_server_defaults(cfg, cfg)                      # defaults gets them now, on its next start
+    if cfg != before:
+        write_config(cfg_path, cfg)
+        ok(f"added the defaults to {cfg_path.name}: host {cfg['host']}, API key {cfg['api_key']}, "
+           "the end-of-turn check " + ("on" if cfg["turn_tail_check"] else "off"))
     missing = [p for p in [cfg["exe"], *[a for a in cfg["args"] if a.endswith(".gguf")]] if not Path(p).exists()]
     if missing:
         fail(f"{cfg_path.name} refers to missing files: {missing[0]}", "run it again with --setup to repair")
@@ -4141,10 +4201,29 @@ def use_cuda12(cards, cfg_path: Path, cfg: dict, yes: bool) -> dict:
     return cfg
 
 
+def run_flags(cfg_path: Path, open_browser: bool) -> list[str]:
+    """The server flags a run script carries: --open when the chat page should open (#609), and --turn-tail-check
+    when the end-of-turn check is on. The host and the API key are not repeated here - the run config beside the
+    script has them - and a config that turns the check off is respected. A config that is not there yet gets the
+    defaults, so a script written before its file is always the same one the file would give.
+    """
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    flags = ["--open"] if open_browser else []
+    if cfg.get("turn_tail_check", DEFAULT_TURN_TAIL_CHECK):
+        flags.append("--turn-tail-check")
+    return flags
+
+
 def write_run_script(model, cfg_path, port, open_browser=True):
-    """run-<model>.bat / .sh: the server with this config; `open_browser` False (#609: --no-browser) leaves --open out."""
+    """run-<model>.bat / .sh: the server with this config; `open_browser` False (#609: --no-browser) leaves --open
+    out. The end-of-turn check is on unless the model's config says otherwise."""
     serve = [sys.executable, str(ROOT / "serve" / "server.py"), "--engine", "hypercore", "--config", str(cfg_path),
-             "--port", str(port)] + (["--open"] if open_browser else [])
+             "--port", str(port)] + run_flags(cfg_path, open_browser)
     if WIN:
         script = ROOT / f"run-{model.lower()}.bat"
         script.write_text("@echo off\r\ntitle HyperCore " + model + "\r\ncd /d \"" + str(ROOT) + "\"\r\n" +
@@ -4258,7 +4337,10 @@ def main() -> int:
                     help="with two or more GPUs: leave out --remote-expert-opt, which setup adds there (#578)")
     ap.add_argument("--host", help="where the server listens: 127.0.0.1 = this PC only (default), 0.0.0.0 = also other "
                                    "devices on your network (issue #26; set --api-key too)")
-    ap.add_argument("--api-key", help="require this key from clients (recommended with --host 0.0.0.0)")
+    ap.add_argument("--api-key", help="require this key from clients (a new install is set up with the key 0000)")
+    ap.add_argument("--no-turn-tail-check", dest="turn_tail_check", action="store_false", default=None,
+                    help="end a turn as it is, without asking the model whether every task is done (the end-of-turn "
+                         "check is on by default; remembered for this model)")
     ap.add_argument("--no-browser", dest="browser", action="store_false", default=None,
                     help="do not open the chat page in the browser when the model is ready (for a harness or an app "
                          "that uses the API; remembered for this model, also in run-<model>.bat/.sh)")
@@ -5092,6 +5174,8 @@ def main() -> int:
         cfg["draft_vocab"] = draft_vocab
     if a.browser is not None:                          # #609: only when given (else an earlier choice is carried over)
         cfg["open_browser"] = a.browser
+    if a.turn_tail_check is not None:                  # the end-of-turn check: on by default, this turns it off
+        cfg["turn_tail_check"] = a.turn_tail_check
     # #465: requests at once - written only when given (else an earlier "parallel" is carried over); a recommendation
     streaming = "--kv-resident" in args
     if a.parallel is not None:
@@ -5138,11 +5222,15 @@ def main() -> int:
 
     say()
     say("All set.")
-    say(f"  API (OpenAI):     http://127.0.0.1:{port}/v1   (any API key; model name: anything)")
+    say(f"  API (OpenAI):     http://127.0.0.1:{port}/v1   (model name: anything)")
     say(f"  API (Anthropic):  http://127.0.0.1:{port}/v1/messages")
-    if a.host and a.host not in ("127.0.0.1", "localhost"):
+    if cfg.get("host") not in ("127.0.0.1", "localhost", None):        # the default: every device on the network
         say(f"  Other devices:    the server window prints this PC's address (http://<IP>:{port}/)"
-            + ("" if a.api_key else " - no API key set: anyone on your network can use it"))
+            + (f" - the API key is {cfg['api_key']}" if cfg.get("api_key")
+               else " - no API key set: anyone on your network can use it"))
+    if cfg.get("turn_tail_check"):
+        say("  Turn check:       a turn that would end is asked whether its work is done and goes on while it is not "
+            "(--no-turn-tail-check turns it off)")
     say(f"  Next time:        just run {'START-HERE.bat' if WIN else './setup.sh'} (or {script.name}) - it starts right away")
     if vision != "none":
         say("  Images:           send them in the chat page, in chat.py (/image <path>) or over the API")

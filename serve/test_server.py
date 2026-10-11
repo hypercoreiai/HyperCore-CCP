@@ -1289,8 +1289,12 @@ class GpuChoice(unittest.TestCase):
         self.assertEqual(venv["CUDA_VISIBLE_DEVICES"], "2")
         self.assertEqual(venv["CUDA_DEVICE_ORDER"], "PCI_BUS_ID")
         self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "0,1")
+        self.assertEqual(venv["GGML_NO_BACKTRACE"], "1")    # the encoder's crash reporter writes on stdout
         plain = {"gpu": [0, 1], "vision": {"exe": "v"}}
-        self.assertIs(vision_env(plain, env), env)          # no cuda_device: the engine's environment, unchanged
+        same = vision_env(plain, env)                       # no cuda_device: the engine's settings, plus no backtrace
+        self.assertIsNot(same, env)                         # a copy: the engine's environment is never touched
+        self.assertEqual({k: v for k, v in same.items() if k != "GGML_NO_BACKTRACE"}, env)
+        self.assertEqual(vision_env(plain, {"GGML_NO_BACKTRACE": "0"})["GGML_NO_BACKTRACE"], "0")  # an explicit choice wins
 
     def test_hip_ordinal(self):
         """#325: on Windows the HIP ordinal setup resolved wins over the config's "gpu" (an iGPU takes HIP's 0)."""
@@ -1760,6 +1764,56 @@ class StartNarrator(unittest.TestCase):
         self.assertIn("experts loaded: 31.64 GiB at 3.17 GiB/s", said)
 
 
+class StartNarratorOnTheWorkerPath(unittest.TestCase):
+    """#505, again on the path the run script actually takes: the binary IPC worker through
+    serve/hypercore_supervisor.py.  The narrator was wired only into the fixture engine, so the
+    server window said nothing for the minutes the model loads - the very thing the warning is
+    for.  These tests drive the handler with a stub supervisor that writes what a worker writes."""
+
+    class Stub:
+        """A supervisor: the same stderr_log + config a real one holds, and a start that succeeds."""
+
+        def __init__(self, log: Path, args: list[str]) -> None:
+            self.stderr_log = str(log)
+            self.config = json.dumps({"engine_args": args})
+            self.caps = {}
+
+        def restart(self) -> bool:
+            with open(self.stderr_log, "w", encoding="utf-8") as f:      # the worker's stderr, mode "w"
+                f.write("hypercore generate: expert arena: resident, 31.64 GiB\n")
+                f.write("hypercore generate: loaded 31.64 GiB at 3.17 GiB/s\n")
+                f.write("hypercore serve: session is up\n")
+            time.sleep(1.2)          # narrate_start reads the log in 0.5 s steps
+            return True
+
+    def words(self, log: Path, args: list[str]) -> str:
+        from serve.server import HyperCoreRequestHandler
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertTrue(HyperCoreRequestHandler(self.Stub(log, args)).restart())
+        return out.getvalue()
+
+    def test_the_worker_start_is_narrated(self):
+        said = self.words(Path(tempfile.mkdtemp()) / "worker.log",
+                         ["--resident-experts", "--max-context", "131072"])
+        self.assertIn("[hypercore] starting the engine: reading the model's weights ...", said)
+        self.assertIn("the experts the GPU does not hold into RAM", said)
+        self.assertIn("YOUR PC CAN BE SLOW OR STOP RESPONDING FOR 1-3 MINUTES NOW", said)
+        self.assertIn("experts loaded: 31.64 GiB at 3.17 GiB/s", said)
+        self.assertIn("[hypercore] almost ready ...", said)
+
+    def test_a_worker_with_no_log_says_nothing(self):
+        from serve.server import HyperCoreRequestHandler, worker_start_words
+        self.assertIsNone(worker_start_words(SimpleNamespace(stderr_log=None, config="{}")))
+        self.assertEqual(worker_start_words(SimpleNamespace(stderr_log="/tmp/x.log", config="not json")),
+                         ("/tmp/x.log", []))
+        out = io.StringIO()
+        stub = SimpleNamespace(stderr_log=None, config="{}", restart=lambda: True)
+        with contextlib.redirect_stdout(out):
+            self.assertTrue(HyperCoreRequestHandler(stub).restart())
+        self.assertEqual(out.getvalue(), "")
+
+
 class CancelledRead(unittest.TestCase):
     """#471: a request cancelled while its prompt was read is recorded with the tokens the engine read (the DONE
     line's 15th field), not the whole prompt; an older engine's line (no such field) keeps the whole prompt."""
@@ -2158,6 +2212,18 @@ class WebApp(unittest.TestCase):
                 code, ctype, _ = self.get(path)
                 self.assertEqual(code, 200)
                 self.assertIn(want, ctype)
+
+    def test_the_page_carries_the_key_it_requires(self):
+        """A server started with a key serves its own page with that key, so the chat page
+        works without typing it in. Without a key the page is the file as it is on disk."""
+        self.svc.api_key = "0000"
+        body = self.get("/")[2]
+        self.assertIn(b'window.HYPERCORE_API_KEY = "0000"', body)
+        self.assertEqual(body.count(b"HYPERCORE_API_KEY"), 1)          # the page, not every <title>
+        self.svc.api_key = 'a"b'                                       # a key with a quote stays one string
+        self.assertIn(b'window.HYPERCORE_API_KEY = "a\\"b"', self.get("/")[2])
+        self.svc.api_key = ""
+        self.assertNotIn(b"HYPERCORE_API_KEY", self.get("/")[2])
 
     def test_only_the_app_files_are_served(self):
         for path in ("/web/..%2Fserver.py", "/web/index.html", "/web/test.py", "/fonts/..%2F..%2Fsetup.py",
@@ -3966,6 +4032,80 @@ class ClaudeCodeBillingStamp(unittest.TestCase):
         first = svc.encode_prompt(*anthropic_to_messages({"system": self.blocks(c="b145e"), "messages": turn1,
                                                          "tools": tools}))
         self.assertEqual(ids[1][:len(first) - 8], first[:len(first) - 8])   # all but the generation header
+
+
+class BugEngine(MockEngine):
+    """An engine that raises something the request path has no handler for: a bug in this server, not an engine
+    death. `BaseHTTPRequestHandler.handle_error` would otherwise print 'Exception occurred during processing of
+    request from (...)' and leave the client with a half-written response."""
+
+    def generate(self, ids, max_new, sampling, cancel, embeddings=None):
+        raise RuntimeError("template bug")
+
+
+class UnhandledRequestError(unittest.TestCase):
+    """A bug in a request answers 500 (or an SSE error event) instead of throwing out of the handler."""
+
+    @classmethod
+    def setUpClass(cls):
+        tok = ByteTokenizer()
+        cls.engine = BugEngine(tok, "ok", max_context=CTX)
+        cls.svc = Service(cls.engine, tok, ChatTemplate(ROOT / "serve/chat_template.jinja"))
+        cls.svc.api_monitor = True                          # the record only exists when the monitor is on
+        cls.httpd = serve(cls.svc, port=0)
+        cls.base = f"http://127.0.0.1:{cls.httpd.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+
+    def _post(self, path, body):
+        """-> (status, response text, everything the server printed while handling this request)."""
+        req = urllib.request.Request(self.base + path, data=json.dumps(body).encode(),
+                                    headers={"Content-Type": "application/json"})
+        printed = io.StringIO()
+        with contextlib.redirect_stderr(printed), contextlib.redirect_stdout(printed):
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return r.status, r.read().decode(), printed.getvalue()
+            except urllib.error.HTTPError as e:
+                with e:
+                    return e.code, e.read().decode(), printed.getvalue()
+
+    def test_a_bug_before_the_stream_answers_500_json(self):
+        status, raw, _ = self._post("/v1/chat/completions",
+                                    {"model": "m", "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(status, 500)
+        got = json.loads(raw)
+        self.assertEqual(got["error"]["type"], "server_error")
+        self.assertIn("template bug", got["error"]["message"])
+
+    def test_a_bug_mid_stream_closes_the_stream_with_an_error_event(self):
+        status, raw, _ = self._post("/v1/chat/completions",
+                                    {"model": "m", "messages": [{"role": "user", "content": "hi"}],
+                                     "stream": True})
+        self.assertEqual(status, 200)                       # the SSE headers were already on the wire
+        self.assertIn("server_error", raw)
+        self.assertIn("template bug", raw)
+        self.assertTrue(raw.strip().endswith("[DONE]"))     # the stream ends, the client is not left hanging
+
+    def test_the_handler_is_not_left_to_print_a_socket_trace(self):
+        status, _, printed = self._post("/v1/chat/completions",
+                                        {"model": "m", "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(status, 500)
+        self.assertNotIn("Exception occurred during processing", printed)
+        self.assertIn("unhandled request error", printed)   # the one line the operator is meant to see
+
+    def test_an_unhandled_error_is_recorded_for_the_monitor(self):
+        status, _, _ = self._post("/v1/chat/completions",
+                                  {"model": "m", "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(status, 500)
+        live = self.svc.request_records()                    # newest first
+        self.assertTrue(live, "the request should have a record at all")
+        rec = live[0]
+        self.assertEqual(rec.get("http_status"), 500)
+        self.assertEqual(rec.get("error", {}).get("type"), "server_error")
 
 
 if __name__ == "__main__":

@@ -93,6 +93,7 @@ from serve.hypercore_supervisor import (
 from serve.ipc_parser import (
     STREAM_TERMINAL,
     STREAM_TOKEN,
+    derive_monitor_field,
 )
 
 logger = logging.getLogger("hypercore.server")
@@ -498,6 +499,69 @@ def narrate_start(log_path: str, offset: int, args: list, done: threading.Event,
             print(f"[hypercore] still starting ({time.time() - t0:.0f} s) - please wait ...", flush=True)
 
 
+def worker_start_words(supervisor) -> tuple[str, list[str]] | None:
+    """What the narrator needs from a supervisor: the file its worker's stderr goes to, and the
+    engine flags that worker was started with (its own config).  None without a log: there is
+    nothing to read, and the window then says nothing about the minutes of loading (#505)."""
+    log = getattr(supervisor, "stderr_log", None)
+    if not log:
+        return None
+    try:
+        cfg = json.loads(getattr(supervisor, "config", "") or "{}")
+    except (TypeError, ValueError):
+        cfg = {}
+    return str(log), list(cfg.get("engine_args") or [])
+
+
+def narrate_worker_start(supervisor, ready: threading.Event) -> None:
+    """Say in the server window what the worker is doing while it starts, from its log (#505).
+    Daemon thread, stopped by `ready`: the start reads tens of GB into RAM and locks part of it
+    for the GPU, and on many PCs everything freezes for a minute or more - people closed the
+    window thinking it had hung."""
+    words = worker_start_words(supervisor)
+    if not words:
+        return
+    log, args = words
+    threading.Thread(target=narrate_start, args=(log, 0, args, ready), daemon=True).start()
+
+
+EXPERT_SOURCE_NAMES = {
+    0: "no expert tier",
+    1: "mapped read-only from the pack (--mmap-experts)",
+    2: "the arena copy (--expert-cache)",
+    3: "resident in page-locked RAM (--resident-experts)",
+}
+
+
+def expert_config_line(info: dict) -> str:
+    """The expert configuration the worker resolved, in one line, when setup finishes.
+
+    The engine prints all of this at startup, but to its own log file. In the split
+    architecture the worker's stderr goes to that log and not to the terminal, so the person
+    starting the server sees a model name and a port and nothing about the tier that decides
+    whether the run is fast. This is that line, from the numbers the worker already reports.
+    """
+    slots = int(info.get("expert_slots") or 0)
+    full = int(info.get("expert_slots_full") or 0)
+    mib = int(info.get("expert_cache_mib") or 0)
+    full_mib = int(info.get("expert_cache_full_mib") or 0)
+    source = info.get("expert_source")
+    free = info.get("vram_free_mib")
+    if source is None:
+        return ("[hypercore] expert configuration: the worker did not report one. "
+               "Its log holds the detail: " + str(info.get("log") or "(no log configured)"))
+    parts = [f"{slots} of {full} VRAM expert slots" if full else f"{slots} VRAM expert slots",
+            f"{mib / 1024:.2f} GiB" + (f" of {full_mib / 1024:.2f} GiB" if full_mib > mib else "")]
+    line = "[hypercore] expert configuration: " + ", ".join(parts) + " held by " + EXPERT_SOURCE_NAMES.get(int(source), f"source {source}")
+    if free:
+        line += f" ({free} MiB of VRAM free when it was sized)"
+    if info.get("prompt_chunk"):
+        line += f", prompt chunk {info['prompt_chunk']} tokens"
+    if info.get("pcie_frac") is not None and info.get("pcie_frac") >= 0:
+        line += f", pcie_frac {info['pcie_frac']:.2f}"
+    return line
+
+
 class ConvCacheLog:
     """#596: the engine's conversation cache as its log tells it (the engine writes "hypercore serve: conversation
     cache: parked N tokens ...; parked=P bytes=B evictions=E" and "restored N tokens ...; parked=P bytes=B" to stderr,
@@ -597,6 +661,35 @@ def network_path(path: str) -> bool:
     return p.startswith("\\\\") or p.startswith("\\??\\")
 
 
+VISION_ALLOC_MARKS = ("cudaMalloc", "alloc_tensor_range", "GGML_ASSERT", "out of memory")
+ENGINE_LINES = ("hypercore serve:", "hypercore generate:", "hypercore_worker:", "hypercore mtp:",
+                "hypercore verify:", "hypercore hc:", "FileExpertSource:")
+VISION_VRAM_MIB = 1400          # the GPU encoder's share: 865 MiB of BF16 mmproj tensors + its CUDA context + work buffers
+VISION_VRAM_HINT = (" - the image encoder needs its own share of VRAM (about 1.4 GB with --vision gpu): run setup "
+                    "with --vision cpu, give it a card of its own (vision.cuda_device in the config), or free the "
+                    "one it is on (docs/TROUBLESHOOTING.md)")
+
+
+def vision_start_reason(log: str | None, offset: int) -> str:
+    """What the image encoder said before it died: after `offset` in the log its stderr went to - the model's log is
+    shared with the engine, so the engine's lines are skipped - the line naming an allocation (the most actionable
+    mark first), else its last line.  "" with no log or nothing new in it."""
+    if not log:
+        return ""
+    try:
+        with open(log, "rb") as f:
+            f.seek(offset)
+            lines = [x.strip() for x in f.read().decode("utf-8", "replace").splitlines()
+                     if x.strip() and not x.strip().startswith(ENGINE_LINES)]
+    except OSError:
+        return ""
+    for mark in VISION_ALLOC_MARKS:
+        for line in lines:
+            if mark in line:
+                return line
+    return lines[-1] if lines else ""
+
+
 class Vision:
     """The resident image encoder: `hypercore-vision` (llama.cpp mtmd + the mmproj file) reads `ENC <image> <out>`
     lines and writes each image's embeddings; results are cached by the image's hash, so a conversation that
@@ -635,22 +728,46 @@ class Vision:
             args += ["--min-tokens", str(cfg["min_tokens"])]
         self.dir = self.work_dir()
         self.spawn = (args, log, env)                   # to start it again after an unload
+        self.cpu_only = False                           # set when the card had no room for the encoder
         self.stopped = False
         self._start()
         self.lock = threading.Lock()
         self.cache: dict[str, tuple[Path, int]] = {}
 
-    def _start(self):
-        args, log, env = self.spawn
+    def _start(self, args: list | None = None):
+        args = list(self.spawn[0]) if args is None else list(args)
+        log, env = self.spawn[1], self.spawn[2]
+        # where this start's lines begin in the log: an append-mode handle reports 0 until it is written to, and the
+        # lines of an earlier start would then be read as the encoder's own
+        log_path = getattr(log, "name", None)
+        log_start = os.path.getsize(log_path) if log_path else 0
         # cwd is the encoder's directory: the ENC lines name the files relative to it (#480: no space in the line)
         self.proc = popen("the image encoder", args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=log or subprocess.DEVNULL, text=True, encoding="utf-8", bufsize=1, env=env,
                           cwd=self.dir)
         contain(self.proc)
-        line = self.proc.stdout.readline()
-        if not line.startswith("READY"):
-            raise RuntimeError("the vision encoder did not start: " + line.strip())
-        self.stopped = False
+        for line in iter(self.proc.stdout.readline, ""):
+            if line.startswith("READY"):
+                self.stopped = False
+                return
+            if line.startswith("ERR"):                       # the encoder's own "cannot do this"
+                raise RuntimeError("the vision encoder did not start: " + line.strip())
+            # anything else on stdout before READY is noise (a crash reporter's stack trace, a loader warning):
+            # the reason is on stderr, which went to the log
+        code = self.proc.wait()
+        why = vision_start_reason(log_path, log_start)
+        if "--gpu" in args and not self.cpu_only and any(m in why for m in VISION_ALLOC_MARKS):
+            # the card has no room for the encoder: a chat that answers is better than one that will not start
+            print(f"[hypercore] the image encoder does not fit the VRAM left on the card ({why}). It runs on the "
+                  "CPU instead - pictures are slow (about 3-13 s) but they work. To keep it on the GPU, run setup "
+                  f"again with --vram-reserve-mib {VISION_VRAM_MIB} or --vision cpu (docs/TROUBLESHOOTING.md).",
+                  flush=True)
+            self.cpu_only = True
+            self.spawn = ([a for a in args if a != "--gpu"], log, env)   # a restart stays on the CPU
+            return self._start([a for a in args if a != "--gpu"])
+        hint = VISION_VRAM_HINT if any(m in why for m in VISION_ALLOC_MARKS) else ""
+        raise RuntimeError(f"the vision encoder did not start (it exited with {code})" +
+                          (": " + why if why else "") + hint)
 
     def alive(self) -> bool:
         return not self.stopped and self.proc.poll() is None
@@ -975,11 +1092,16 @@ def child_env(cfg: dict) -> dict:
 def vision_env(cfg: dict, env: dict) -> dict:
     """The image encoder's environment: the engine's, unless the config's vision section names its own "cuda_device"
     (numbered like nvidia-smi) - then the encoder runs on that card alone, so a spare GPU can hold it while the engine
-    keeps all of its own cards' VRAM (#408, Efs-O).  Without it, nothing changes."""
+    keeps all of its own cards' VRAM (#408, Efs-O).  Without it, nothing changes.
+
+    GGML_NO_BACKTRACE: llama.cpp's crash reporter forks gdb and writes its stack trace on stdout, which is the pipe
+    _start() reads - so a failed start is reported as "[New LWP 12345]" instead of the reason.  The encoder's stderr
+    (the assert, the cudaMalloc that did not fit) still goes to the log."""
+    env = dict(env)
+    env.setdefault("GGML_NO_BACKTRACE", "1")
     dev = (cfg.get("vision") or {}).get("cuda_device")
     if dev is None:
         return env
-    env = dict(env)
     if cfg.get("backend") == "hip":
         env["HIP_VISIBLE_DEVICES"] = str(dev)
     else:
@@ -1186,6 +1308,10 @@ class HyperCoreRequestHandler:
         reply. tools/calibrate.py reads them as the defaults its measurements must beat;
         without them it falls back to the product defaults and tunes against the wrong
         starting point.
+
+        The expert-tier keys are the same reply's appended fields (#Monitor). The Monitor tab
+        reads expert_slots/expert_cache_mib for "Experts in VRAM"; without them it shows "-"
+        on a machine that has a cache, which looks like a missing feature and is not.
         """
         sup = self.supervisor
         caps = getattr(sup, "caps", {}) or {}
@@ -1197,6 +1323,13 @@ class HyperCoreRequestHandler:
             "pcie_frac": getattr(sup, "instance_pcie_frac", -1.0),
             "spec_min_p": getattr(sup, "instance_spec_min_p", -1.0),
             "pool_workers": int(caps.get("active_pool_workers", 0) or 0),
+            "expert_slots": int(caps.get("expert_slots") or 0),
+            "expert_slots_full": int(caps.get("expert_slots_full") or 0),
+            "expert_cache_mib": int(caps.get("expert_cache_mib") or 0),
+            "expert_cache_full_mib": int(caps.get("expert_cache_full_mib") or 0),
+            "vram_free_mib": caps.get("vram_free_mib"),
+            "expert_source": caps.get("expert_source"),
+            "prompt_chunk": caps.get("prompt_chunk"),
         }
 
     def alive(self) -> bool:
@@ -1207,7 +1340,10 @@ class HyperCoreRequestHandler:
         return proc.returncode if proc is not None else None
 
     def restart(self, tries: int = 3) -> bool:
+        ready = threading.Event()
+        narrate_worker_start(self.supervisor, ready)     # the words the fixture path always had (#505)
         ok = self.supervisor.restart() if hasattr(self.supervisor, "restart") else self.supervisor.start_worker()
+        ready.set()                                     # the narrator stops when the worker is up (or failed)
         if ok:
             self.last = None
             self.last_err = ""
@@ -1225,26 +1361,45 @@ class HyperCoreRequestHandler:
     def monitor_snapshot(self) -> dict[str, object]:
         return self.supervisor.monitor_snapshot()
 
+    @property
+    def prefill_tok_s_mean(self) -> float | None:
+        """Tokens per second the worker spent reading the last request's prompt.
+
+        The terminal summary carries both halves of it - `prompt_read` and `prefill_ms` - so
+        the rate is one division, not a second measurement. None until a request has finished
+        with both fields; the worker's prompt-progress lines are not on the wire, so there is
+        no live figure while a prompt is being read.
+        """
+        return self.monitor_snapshot().get("prefill_tok_s_mean")
+
     def death_note(self) -> str:
         err = getattr(self.supervisor, "last_stderr", lambda: "")()
         return err.strip() if err else ""
 
     def _request_last(self, summary: dict[str, object]) -> dict[str, object]:
+        """The last request's figures, in the names the Monitor and the history rows use.
+
+        A counter the worker did not report stays None. The Recent requests table renders None
+        as "-"; rendering it as 0 would tell a reader the expert cache had no hits, which is a
+        different fact and a more alarming one.
+        """
         return {
             "generated": int(summary.get("produced_tokens", 0) or 0),
             "prompt_ms": float(summary.get("prefill_ms", 0) or 0),
             "decode_ms": float(summary.get("decode_ms", 0) or 0),
             "finish": summary.get("stop_reason", "unknown"),
             "reused": int(summary.get("prompt_reused", 0) or 0),
-            "prompt_read": None,
+            "prompt_read": summary.get("prompt_read"),
+            # the same division the Monitor's Prefill card uses, from the same table row
+            "prefill_tok_s_mean": derive_monitor_field("prefill_tok_s_mean", summary, {}),
             "drafts_offered": int(summary.get("drafts_offered", 0) or 0),
             "drafts_accepted": int(summary.get("drafts_accepted", 0) or 0),
-            "hits": 0,
-            "lookups": 0,
-            "offloaded": 0,
-            "ram_blobs": None,
-            "file_blobs": None,
-            "file_mb": None,
+            "hits": summary.get("cache_hits"),
+            "lookups": summary.get("cache_lookups"),
+            "offloaded": summary.get("offloaded"),
+            "ram_blobs": summary.get("ram_blobs"),
+            "file_blobs": summary.get("file_blobs"),
+            "file_mb": (int(summary["file_kb"]) / 1000.0) if summary.get("file_kb") is not None else None,
         }
 
     def generate(self, ids, max_new, sampling=None, cancel=None, embeddings=None):
@@ -1261,9 +1416,12 @@ class HyperCoreRequestHandler:
         except Exception as exc:
             self.last_err = str(exc)
             raise
-        summary = getattr(self.supervisor, "last_summary", None)
-        if summary:
-            self.last = self._request_last(summary)
+        finally:
+            # A turn that ended on the end-of-turn token closes this generator at that token,
+            # so the summary has to be taken on the way out, not after the loop.
+            summary = getattr(self.supervisor, "last_summary", None)
+            if summary:
+                self.last = self._request_last(summary)
 
 # ---------------------------------------------------------------- raw inference lane
 # POST /infer/stream is the raw-token route: it speaks the frame protocol directly and
@@ -1275,7 +1433,10 @@ class HyperCoreRequestHandler:
 # lives in HyperCoreProcessSupervisor.stream(). This function only serialises what it
 # is handed and notices that the client has gone.
 
-STREAM_STALL_S = 30.0
+# The wall for the worker's ack to a submit. It is not the stream's silence limit:
+# that is the supervisor's own (the config's "engine_silence_s"), and a prompt of six
+# figures takes longer to read than this.
+STREAM_ACK_S = 30.0
 
 
 def stream_sse(
@@ -1289,8 +1450,8 @@ def stream_sse(
     max_new: int,
     pcie_frac: float = -1.0,
     spec_min_p: float = -1.0,
-    stall_s: float = STREAM_STALL_S,
-    timeout_s: float = 30.0,
+    stall_s: float | None = None,
+    timeout_s: float = STREAM_ACK_S,
 ) -> str:
     """Drive the supervisor's generator and write SSE. Returns an outcome token.
 
@@ -1428,9 +1589,10 @@ class Service:
         self.started_at = time.time()
         self.status_lock = threading.Lock()
         self.mcp = None                                  # serve/mcp/'s McpHub when MCP servers are configured
-        # GET /prompts: the agent profiles the web app's dropdown is built from. prompt.json beside the server
-        # is re-read when it changes, so a new profile reaches the menu with no code change and no restart.
-        self.prompts_path = str(ROOT / "prompt.json")
+        # GET /prompts: the agent profiles the web app's dropdown is built from. prompt.json beside the
+        # server, or the one in the prompts/ folder beside it, is re-read when it changes, so a new profile
+        # reaches the menu with no code change and no restart.
+        self.prompts_path = agent_prompts.find_prompt_file(ROOT)
         # sharing the GPU with other programs (all off by default): unload the engine after this many idle seconds,
         # only start it again when this much VRAM is free, and run this command first (e.g. to unload another
         # server's model); the next request after an unload starts the engine again
@@ -1441,6 +1603,10 @@ class Service:
         self.reasoning_loop_recovery = False
         self.reasoning_budget_tokens = 0                 # #123: the config's default thinking budget (0: none)
         self.repeat_stop_tokens = REPEAT_STOP_TOKENS     # #606: one token this many times in a row ends a reply (0: off)
+        # the turn-tail check (#...): off until the config or --turn-tail-check turns it on
+        self.turn_tail_check = False
+        self.turn_tail_checks = TAIL_CHECK_MAX
+        self.turn_tail_prompt = TAIL_CHECK_PROMPT
         self.anthropic_think_unasked = True               # #278: "anthropic_thinking": "on_request" -> False
         self.stop_ids = set(tokenizer.encode(IM_END, parse_special=True) +
                             tokenizer.encode("<|endoftext|>", parse_special=True))
@@ -1785,10 +1951,30 @@ class Service:
                    if s.get("busy") and s.get("first_token"))
 
     def _prefill_tok_s_mean(self):
-        """Engine-reported mean over newly read tokens, excluding the cached prefix."""
+        """Tokens per second the engine spent reading a prompt, the cached prefix excluded.
+
+        While a prompt is being read this is the worker's live prompt-progress rate. Once the
+        first token has arrived the prefill is over, so the live number is 0 rather than a
+        stale rate from the prompt just read. When the engine is idle, the Monitor's Prefill
+        card uses the last finished request's rate; None means nothing has been measured.
+        """
         with self.status_lock:
-            reading = self.status.get("busy") and self.status.get("first_token") is None
-        return getattr(self.engine, "prefill_tok_s_mean", None) if reading else 0.0
+            busy, first_token = bool(self.status.get("busy")), self.status.get("first_token")
+        if busy and first_token is not None:
+            return 0.0
+        rate = getattr(self.engine, "prefill_tok_s_mean", None)
+        if rate is not None:
+            return rate
+        with self.status_lock:
+            timings = dict(self.last_timings or {})
+            last = self.history[-1] if self.history else None
+        if timings.get("prompt_per_second") is not None:
+            return float(timings["prompt_per_second"])
+        if last and last.get("prompt_ms") and (last.get("prompt_read") or last.get("prompt_tokens")):
+            read = last.get("prompt_read") or max(0, (last.get("prompt_tokens") or 0) - (last.get("reused") or 0))
+            if read:
+                return round(read / (float(last["prompt_ms"]) / 1000), 1)
+        return None
 
     def begin_request(self, path, req):
         """#332: a monitor record for this request, or None when the monitor is off (nothing is kept then)."""
@@ -1847,7 +2033,7 @@ class Service:
                 "elapsed_s": round(now - s["started"], 1) if s.get("busy") and s.get("started") else None,
                 "tok_s": round(self._tok_s(), 1) if state == "generating" else None,
                 "tok_s_mean": round(self._tok_s_mean(), 1) if state == "generating" else None,
-                "prefill_tok_s_mean": getattr(self.engine, "prefill_tok_s_mean", None) if s.get("busy") else None,
+                "prefill_tok_s_mean": self._prefill_tok_s_mean(),
                 "tok_s_window_s": RATE_WINDOW_S if state == "generating" else None}
         if state == "reading" and progress:
             live["prompt_read"], live["prompt_total"] = progress
@@ -2434,6 +2620,7 @@ class Service:
                                 "prompt_tokens": seen, "reused": last.get("reused"), "output_tokens": n,
                                 # the request's whole prompt, and the tokens read of it (None: an older engine)
                                 "prompt_total": len(ids), "prompt_read": last.get("prompt_read"),
+                                "prefill_tok_s_mean": last.get("prefill_tok_s_mean"),
                                 "reasoning_recoveries": recovery_count,
                                 "reasoning_repeat_coverage": round(repeat_coverage, 3),
                                 "engine_generated": last.get("generated"),
@@ -2548,6 +2735,72 @@ def _debug_req(api, req, messages, tools, max_new, thinking, prompt_tokens):
           f"max_tokens_raw={req.get('max_tokens')!r}/{req.get('max_completion_tokens')!r} "
           f"max_new={max_new} thinking={thinking} stream={bool(req.get('stream'))} "
           f"prompt_tokens={prompt_tokens} last={last.get('role')!r}:{preview!r}", flush=True)
+
+
+# ------------------------------------------------------------------------------------------------ the turn tail
+# Opt-in ("turn_tail_check": true): when a turn would end, the server appends one short turn asking the
+# model whether every task in the request is done. A bare confirmation ends the turn; anything else - a
+# "no", or the model ignoring the question and carrying on - is the turn still open, so the work
+# continues and the question is asked again, up to "turn_tail_checks" times.
+TAIL_CHECK_PROMPT = ('Before this turn ends, check your work against the request: did you complete every '
+                     'task it asked for? If everything is done, reply with the single word "done" and '
+                     'nothing else. If anything is still outstanding, do that work now.')
+TAIL_CHECK_MAX = 3              # how many times one turn may be asked, at most
+TAIL_CONFIRM_CHARS = 120        # a confirmation is a word or two; longer text is the model working on
+TAIL_OUTSTANDING = ("not yet", "still need", "still have", "haven't", "have not", "incomplete",
+                    "unfinished", "remaining", "i need", "i'll", "i will", "are outstanding",
+                    "is outstanding", "pending", "not done", "next step", "continue working", "to do")
+TAIL_CONFIRM = ("done", "complete", "completed", "finished", "everything is done", "all tasks done",
+                "all tasks complete", "no outstanding", "nothing outstanding", "nothing left",
+                "nothing more", "yes")
+
+
+def tail_normalize(text: str) -> str:
+    """A reply as words: lower case, punctuation and runs of space gone."""
+    return " ".join((text or "").lower().replace(".", " ").replace(",", " ").replace("!", " ").split())
+
+
+def tail_is_done(text: str) -> bool:
+    """A reply to the turn-tail check: is the work finished?
+
+    A turn is still open when the reply says so (an outstanding-work word), when it is longer than a
+    word or two (a model carrying on is not confirming), or when there is no reply at all - ignoring
+    the question is not an answer.
+    """
+    t = tail_normalize(text)
+    if not t or len(t) > TAIL_CONFIRM_CHARS:
+        return False
+    if any(w in t for w in TAIL_OUTSTANDING):
+        return False
+    return any(w in t for w in TAIL_CONFIRM)
+
+
+class TailHold:
+    """A check round's reply, held until it is known whether the work is finished.
+
+    A confirmation is never shown to the client; everything else is the model doing its remaining work
+    and is streamed as soon as it is clear. The same shape as the stop-string matcher in Service.run:
+    text is emitted only when it cannot still be a confirmation.
+    """
+
+    def __init__(self):
+        self.held, self.open = "", True
+
+    def push(self, text: str) -> str:
+        if not self.open:
+            return text
+        self.held += text
+        t = tail_normalize(self.held)
+        if not t:
+            return ""                       # only whitespace so far: nothing to say yet
+        if len(t) > TAIL_CONFIRM_CHARS or any(w in t for w in TAIL_OUTSTANDING):
+            out, self.held, self.open = self.held, "", False
+            return out
+        return ""
+
+    def flush(self) -> str:
+        out, self.held = self.held, ""
+        return out
 
 
 # ------------------------------------------------------------------------------------------------ MCP tool loop
@@ -2766,6 +3019,63 @@ def run_with_mcp(svc: Service, hub, messages, tools, kw, ids, thinking, max_new,
     yield "done", {**done, "completion_tokens": total, "prompt_tokens": len(ids)}
 
 
+def with_tail_check(svc: Service, gen, messages, tools, kw, max_new, sampling, cancel, restart):
+    """Run a turn; when it would end, ask once whether the work is finished, and keep going if it is not.
+
+    `gen`: this turn's events (Service.run's or run_with_mcp's). `restart(messages, ids, thinking,
+    max_new)`: the generator for the next round, with the check turn appended. The turn ends on a bare
+    confirmation, on the check limit, or when there is nothing to check: a reply cut short (a length
+    stop, a cancel), a forced tool call, or no text at all. The check's own prompt is not shown to the
+    client, and neither is a bare confirmation; everything else the model writes is streamed as usual,
+    and every round's output tokens are counted in the turn's usage.
+    """
+    checks, tokens = 0, 0
+    while True:
+        hold, answer, done = TailHold(), [], None
+        for kind, x in gen:
+            if kind == "done":
+                done = x
+                continue
+            if kind == "event" and getattr(x, "kind", "") == "content":
+                raw = x.text or ""
+                answer.append(raw)
+                out = hold.push(raw)
+                if out:
+                    yield "event", Event("content", out)
+                continue
+            yield kind, x
+        if done is None:
+            return
+        tokens += int(done.get("completion_tokens") or 0)
+        text = "".join(answer)
+        # A bare confirmation is never shown to the client; anything the hold kept back is the
+        # model doing its remaining work, and is sent now.
+        rest = hold.flush()
+        if rest and not tail_is_done(text):
+            yield "event", Event("content", rest)
+        if tail_is_done(text):
+            yield "mcp", {"event": "tail_check", "result": "complete", "checks": checks + 1}
+            yield "done", {**done, "completion_tokens": tokens}
+            return
+        if not (svc.turn_tail_check and checks < svc.turn_tail_checks and done.get("finish") == "stop"
+                and text.strip() and not cancel.is_set()):
+            yield "done", {**done, "completion_tokens": tokens}
+            return
+        checks += 1
+        nxt = messages + [{"role": "assistant", "content": text},
+                         {"role": "user", "content": svc.turn_tail_prompt}]
+        try:
+            ids, thinking, room = svc.prepare(nxt, tools, kw, max_new)
+        except (ValueError, EngineDied) as error:
+            print(f"[hypercore] the turn-tail check could not be prepared ({error}); the turn ends here",
+                  flush=True)
+            yield "done", {**done, "completion_tokens": tokens}
+            return
+        yield "mcp", {"event": "tail_check", "result": "continue", "checks": checks,
+                      "max_checks": svc.turn_tail_checks}
+        gen = restart(nxt, ids, thinking, room)
+
+
 # ------------------------------------------------------------------------------------------------ OpenAI
 # The engine's last PP line stops short of the prompt: up to `--short-read` tokens (generate.cpp's `short_read`, 64 by
 # default) are read through the verify windows instead of the batched path, so the batched path never reports the whole
@@ -2926,7 +3236,7 @@ def structured_chunks(chunks, validator):
 
 
 # ------------------------------------------------------------------------------------------------ Anthropic
-def anthropic_events(svc: Service, req: dict, ids, thinking, tools, max_new, cancel, force=None):
+def anthropic_events(svc: Service, req: dict, ids, thinking, tools, max_new, cancel, force=None, run=None):
     mid = "msg_" + uuid.uuid4().hex[:24]
     yield "message_start", {"type": "message_start", "message": {
         "id": mid, "type": "message", "role": "assistant", "model": svc.model_for(req), "content": [],
@@ -2937,9 +3247,11 @@ def anthropic_events(svc: Service, req: dict, ids, thinking, tools, max_new, can
         return ("content_block_stop", {"type": "content_block_stop", "index": index})
 
     streamed, finished = set(), set()              # calls sent piece by piece; those whose final tool_call came (#211)
-    for kind, x in svc.run(ids, thinking, tools, max_new, req, cancel, force=force):
+    for kind, x in run if run is not None else svc.run(ids, thinking, tools, max_new, req, cancel, force=force):
         if kind == "ping":
             yield None
+            continue
+        elif kind == "mcp":
             continue
         if kind == "event":
             ev: Event = x
@@ -3302,6 +3614,12 @@ def make_handler(svc: Service):
                 return
             if path == "" or (path == "/api-monitor" and svc.api_monitor):
                 body = (ROOT / "serve" / "web" / ("monitor.html" if path else "index.html")).read_bytes()
+                # The page is served by this server, so it may carry the key this server
+                # requires: an install set up with a default key would otherwise 401 until
+                # someone typed the key into the Settings field.
+                if svc.api_key:
+                    body = body.replace(b"<title>",
+                        ("<script>window.HYPERCORE_API_KEY = %s</script>" % json.dumps(svc.api_key)).encode(), 1)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -3560,6 +3878,36 @@ def make_handler(svc: Service):
                 self._json(503, {"error": {"type": "server_error", "message": f"{e}; the next request restarts it"}})
             except EngineStuck as e:                         # an unload or restart that could not end the engine
                 self._json(503, {"error": {"type": "server_error", "message": str(e)}})
+            except Exception as e:                           # a bug in this request path: answer 500, not a socket trace
+                import traceback
+                print(f"[hypercore] 500 unhandled request error: {e}", flush=True)
+                traceback.print_exc()
+                self._note(error={"type": "server_error", "message": str(e)})
+                if getattr(self, "sse_started", False):
+                    # The SSE headers are already on the wire, so a JSON 500 would be a second
+                    # response. Close the stream with an error event instead.
+                    try:
+                        if path == "/v1/responses":
+                            self.wfile.write(b"data: " + json.dumps(
+                                responses_error_body(str(e), "server_error", code="server_error")
+                            ).encode() + b"\n\ndata: [DONE]\n\n")
+                        elif path == "/v1/messages":
+                            err = {"type": "error", "error": {"type": "api_error", "message": str(e)}}
+                            self.wfile.write(b"event: error\ndata: " + json.dumps(err).encode() + b"\n\n")
+                        else:
+                            err = {"error": {"type": "server_error", "message": str(e)}}
+                            self.wfile.write(b"data: " + json.dumps(err).encode() + b"\n\ndata: [DONE]\n\n")
+                        self.wfile.flush()
+                    except OSError:
+                        pass
+                else:
+                    try:
+                        if path == "/v1/responses":
+                            self._json(500, responses_error_body(str(e), "server_error", code="server_error"))
+                        else:
+                            self._json(500, {"error": {"type": "server_error", "message": str(e)}})
+                    except OSError:
+                        pass
 
             except OSError:
                 self._note(outcome="disconnected")
@@ -3711,6 +4059,7 @@ def make_handler(svc: Service):
 
         def _sse(self):
             self._note(http_status=200)
+            self.sse_started = True
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
@@ -3797,8 +4146,19 @@ def make_handler(svc: Service):
             _debug_req("openai", req, messages, tools, max_new, thinking, len(ids))
             cancel = threading.Event()
             self._watch_client(cancel)                       # #430 #431
+            mcp_names = {t["name"] for t in (extra if use_mcp else [])}
+
+            def turn(m, i, th, mn):
+                """This turn's events: the MCP loop when the request opted in, the engine otherwise."""
+                if use_mcp:
+                    return run_with_mcp(svc, svc.mcp, m, tools, kw, i, th, mn, max_req, req, cancel, mcp_names)
+                return svc.run(i, th, tools, mn, req, cancel, force=force)
+
             run = run_with_mcp(svc, svc.mcp, messages, tools, kw, ids, thinking, max_new, max_req, req, cancel,
-                               {t["name"] for t in extra}, seed_compact=seed_compact) if use_mcp else None
+                               mcp_names, seed_compact=seed_compact) if use_mcp else None
+            if svc.turn_tail_check and not force:        # the end-of-turn "is the work done?" check
+                run = with_tail_check(svc, run or svc.run(ids, thinking, tools, max_new, req, cancel, force=force),
+                                      messages, tools, kw, max_new, req, cancel, turn)
             chunks = openai_chunks(svc, req, ids, thinking, tools, max_new, cancel, run=run, force=force)
             if validator is not None:
                 chunks = structured_chunks(chunks, validator)
@@ -3835,7 +4195,7 @@ def make_handler(svc: Service):
             """#451: POST /v1/responses - OpenAI's Responses API, stateless (serve/responses.py), on the chat path.
             Errors use the Responses format; once the stream has started they arrive as a response.failed event."""
             try:
-                ids, thinking, tools, max_new, asm, validator, req = self._responses_prepare(req)
+                ids, thinking, tools, max_new, asm, validator, req, messages, kw = self._responses_prepare(req)
             except ResponsesError as e:
                 return self._json(e.status, e.body())
             except WorkerBusy as e:
@@ -3846,6 +4206,10 @@ def make_handler(svc: Service):
                 return self._json(503, responses_error_body(str(e), "server_error", code="server_error"))
             cancel = threading.Event()
             self._watch_client(cancel)                       # #430 #431
+            run = svc.run(ids, thinking, tools, max_new, req, cancel)
+            if svc.turn_tail_check:                          # the end-of-turn "is it done?" check
+                run = with_tail_check(svc, run, messages, tools, kw, max_new, req, cancel,
+                                      lambda m, i, th, mn: svc.run(i, th, tools, mn, req, cancel))
 
             def check(text, finish):
                 return validated_json(text, validator, finish)
@@ -3853,11 +4217,13 @@ def make_handler(svc: Service):
             def events():
                 yield from asm.start()
                 done = None
-                for kind, x in svc.run(ids, thinking, tools, max_new, req, cancel):
+                for kind, x in run:
                     if kind == "ping":
                         yield None
                     elif kind == "event":
                         yield from asm.feed(x)
+                    elif kind == "mcp":
+                        continue
                     elif kind == "done":
                         done = x
                 if done is not None and done["finish"] != "cancel" and not cancel.is_set():
@@ -3960,7 +4326,7 @@ def make_handler(svc: Service):
             asm = responses_api.Assembler(req, svc.model_for(req), len(ids), names,
                                           "reasoning.encrypted_content" in include, validator is not None)
             # the request is also the sampling dict, as on the chat path (temperature, top_p, top_k, seed, ...)
-            return ids, thinking, tools, max_new, asm, validator, req
+            return ids, thinking, tools, max_new, asm, validator, req, messages, kw
 
         def _count_tokens(self, req):
             """Anthropic's token count, which Claude Code asks for its context figures: the prompt this server would
@@ -3985,7 +4351,11 @@ def make_handler(svc: Service):
             _debug_req("anthropic", req, messages, tools, max_new, thinking, len(ids))
             cancel = threading.Event()
             self._watch_client(cancel)                       # #430 #431
-            events = anthropic_events(svc, req, ids, thinking, tools, max_new, cancel, force=force)
+            run = svc.run(ids, thinking, tools, max_new, req, cancel, force=force)
+            if svc.turn_tail_check and not force:            # the end-of-turn "is it done?" check
+                run = with_tail_check(svc, run, messages, tools, kw, max_new, req, cancel,
+                                      lambda m, i, th, mn: svc.run(i, th, tools, mn, req, cancel))
+            events = anthropic_events(svc, req, ids, thinking, tools, max_new, cancel, force=force, run=run)
             events = self._capture(events, "anthropic")
             if not req.get("stream"):
                 return self._json(200, anthropic_collect(events))
@@ -4437,6 +4807,12 @@ def main() -> int:
     ap.add_argument("--api-monitor", action="store_true",
                     help="the API request monitor at /api-monitor: keeps the last 100 requests' prompts and answers in "
                          "memory (also \"api_monitor\": true in the config; off by default)")
+    ap.add_argument("--turn-tail-check", action="store_true",
+                    help="at the end of a turn, ask the model whether every task in the request is done: a bare "
+                         "confirmation ends the turn, a no or more work keeps it going (also turn_tail_check: true "
+                         "in the config; off by default)")
+    ap.add_argument("--turn-tail-checks", type=int, default=None, metavar="N",
+                    help="how many times one turn may be asked (default 3; also \"turn_tail_checks\" in the config)")
     ap.add_argument("--idle-unload", type=float, default=None, metavar="SECONDS",
                     help="unload the model after this many seconds without requests, so other programs (games, other "
                          "model servers) can use the VRAM; the next request loads it again (also \"idle_unload_s\" "
@@ -4536,6 +4912,7 @@ def main() -> int:
             config=worker_config,
             stderr_log=cfg.get("log"),
             startup_timeout_s=startup_s,
+            silence_s=silence,                    # #481: the stream's own wall, not the handshake's
         )
         engine = HyperCoreRequestHandler(supervisor)
         if not lazy and not engine.restart():
@@ -4545,6 +4922,7 @@ def main() -> int:
                                  linux_desktop())
         if note:                                        # #560 #516: before --open starts a browser on that card
             print(note, flush=True)
+        print(expert_config_line(engine.info), flush=True)
     else:
         effort_end = None
         engine, vision, sampling_defaults = MockEngine(tok, a.script or [
@@ -4609,6 +4987,19 @@ def main() -> int:
     if isinstance(rs, bool) or not isinstance(rs, int) or rs < 0:
         raise SystemExit(f"[hypercore] config \"repeat_stop_tokens\" must be a whole number >= 0 (0 = off), not {rs!r}")
     svc.repeat_stop_tokens = rs
+    tail = bool(a.turn_tail_check or cfg.get("turn_tail_check") is True)   # the end-of-turn "is it done?" check
+    svc.turn_tail_check = tail
+    checks = a.turn_tail_checks if a.turn_tail_checks is not None else cfg.get("turn_tail_checks", TAIL_CHECK_MAX)
+    if isinstance(checks, bool) or not isinstance(checks, int) or not 0 <= checks <= 10:
+        raise SystemExit(f"[hypercore] \"turn_tail_checks\" must be a whole number 0-10, not {checks!r}")
+    svc.turn_tail_checks = checks
+    custom_prompt = cfg.get("turn_tail_prompt")
+    if isinstance(custom_prompt, str) and custom_prompt.strip():
+        svc.turn_tail_prompt = custom_prompt.strip()
+    if tail:
+        print(f"[hypercore] turn-tail check on: when a turn would end the model is asked whether its tasks are "
+              f"done, and the turn goes on while it says otherwise (up to {svc.turn_tail_checks} times per turn; "
+              "turn_tail_check in the config)", flush=True)
     svc.effort_end = bool(effort_end)                   # #458: "effort_position": "end" with an engine that has it
     if cfg.get("reasoning_budget_tokens") is not None:  # #123: a default thinking budget for every request
         try:

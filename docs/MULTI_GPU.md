@@ -165,7 +165,9 @@ into the card that owns the layer.
 - Under WDDM (Windows, and WSL2) only 8 GiB of the expert arena is pinned (more, mapped into two GPU contexts,
   leaves WDDM refusing allocations); the rest streams through the pinned staging ring. A Linux driver has no such
   limit, so there the whole arena is pinned (since 0.1.31; the cap cost a 4090 + 3060 split two thirds of its
-  prompt speed, #253). `HYPERCORE_ARENA_PIN_GIB=N` pins at most N GiB, `0` the whole arena, on any OS.
+  prompt speed, #253). `HYPERCORE_ARENA_PIN_GIB=N` pins at most N GiB, `0` the whole arena, on any OS. When
+  `--expert-profile` is supplied, a capped pin follows the profile's hottest layers first; without it, it keeps
+  arena order.
 - Every card needs compute capability 7.5 (RTX 20 or newer). The pre-sm_80 QSA scorer path is fp32 FMAs, so a
   Turing card runs the same kernels instead of the tensor-core prompt attention.
 

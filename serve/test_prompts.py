@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from serve.frontend import ChatTemplate
-from serve.prompts import MAX_PROMPT_CHARS, catalog, render_prompt
+from serve.prompts import MAX_PROMPT_CHARS, catalog, find_prompt_file, render_prompt
 from serve.server import ByteTokenizer, MockEngine, serve
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -127,10 +127,27 @@ class Catalog(unittest.TestCase):
         self.assertIn("### Name\nNexus", text)
         self.assertIn("- a", text)
 
+    def test_the_prompt_file_is_found_beside_the_server_or_in_prompts(self):
+        """A set kept next to the server wins over the shipped prompts/ folder; with neither, the
+        path beside the server is reported as missing rather than guessed."""
+        root = Path(self.dir)
+        Path(self.path).unlink()                                  # nothing beside the server
+        (root / "prompts").mkdir()
+        (root / "prompts" / "prompt.json").write_text(json.dumps(PROFILE), encoding="utf-8")
+        self.assertEqual(find_prompt_file(root), str(root / "prompts" / "prompt.json"))
+        self.assertEqual(len(catalog(find_prompt_file(root))["agents"]), 2)
+        Path(self.path).write_text(json.dumps(PROFILE), encoding="utf-8")
+        self.assertEqual(find_prompt_file(root), str(self.path))   # the user's own file wins
+        Path(self.path).unlink()
+        (root / "prompts" / "prompt.json").unlink()
+        c = catalog(find_prompt_file(root))
+        self.assertEqual(c["agents"], [])
+        self.assertIn("is not there", c["error"])
+
     def test_the_real_prompt_json_offers_the_shipped_profiles(self):
         """The profiles the repo ships are offered; the file is the user's own, so extra
         profiles they have added are not a failure - they must simply be well-formed."""
-        c = catalog(ROOT / "prompt.json")
+        c = catalog(find_prompt_file(ROOT))
         keys = [a["key"] for a in c["agents"]]
         for shipped in ("expert_coding_agent", "expert_research_agent", "expert_vision_agent"):
             self.assertIn(shipped, keys)
