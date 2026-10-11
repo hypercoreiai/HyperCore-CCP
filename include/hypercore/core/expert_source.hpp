@@ -205,6 +205,15 @@ public:
     int64_t predicted() const { return predicted_.load(std::memory_order_relaxed); }
     int64_t skipped() const { return skipped_.load(std::memory_order_relaxed); }
     double busy_ms() const { return (double) busy_us_.load(std::memory_order_relaxed) / 1000.0; }
+    /// HYPERCORE_LOOKAHEAD_STATS (the Strata 0.1.42 look-ahead stats, measurement only): keep each layer's
+    /// prediction, then score it against the experts the router really sends outside the GPU cache.  `enable_stats`
+    /// is called once at start-up; `stats_window_start` marks the generation a window's predictions belong to.
+    void enable_stats(int64_t n_layers);
+    bool stats_on() const { return stats_on_; }
+    void stats_window_start() { ++sub_gen_; }
+    /// The dispatch thread: score the prediction made for `layer` against `ids` (the k ids this window routes),
+    /// `host_res` (>= 0 means the expert is in the GPU cache) and `pcie_num` (the PCIe share, 0..256).
+    void stats_score(int64_t layer, const int32_t* ids, int64_t n, const int32_t* host_res, int pcie_num);
 
 private:
     void run();
@@ -221,6 +230,17 @@ private:
     std::vector<float> x_;
     std::atomic<int64_t> predicted_{0}, skipped_{0};
     std::atomic<uint64_t> busy_us_{0};
+    // the look-ahead stats: per layer, three prediction masks (k, k+4, k+10), a generation stamp, and the
+    // vote-ranked top-k list.  Counters are per process, read every 100 windows.
+    static const int kVoteN = 12;
+    std::unique_ptr<std::atomic<uint64_t>[]> pmask_, pstamp_;
+    std::unique_ptr<std::atomic<int32_t>[]> pvote_;
+    int64_t words_ = 0;
+    bool stats_on_ = false;
+    uint64_t sub_gen_ = 0;
+    uint64_t st_layers_ = 0, st_nopred_ = 0, st_actual_ = 0, st_windows_ = 0, st_pch_ = 0;
+    uint64_t st_hit_[3] = {0, 0, 0}, st_pred_[3] = {0, 0, 0};
+    uint64_t st_vhit_[3] = {0, 0, 0}, st_vpred_[3] = {0, 0, 0}, st_pcov_[3] = {0, 0, 0};
 };
 
 /// Plan v0.3 P6: what the GPU computes in a verify window's layer, written by the pool (mapped host memory) right
@@ -374,6 +394,10 @@ struct ExpertDispatch {
     /// #588: routed (token, expert) entries the GPU computed from outside its cache in verify windows: read over PCIe
     /// (--pcie-frac, kind 1) or on another GPU (kind 2).  In neither cache_hits nor cache_refused.
     int64_t offload_entries = 0;
+    /// HYPERCORE_ROUTE_TAIL_SKIP=R: entries skipped (a missed expert every token of the window routes only at
+    /// rank >= R) and the distinct experts behind them (neither copied nor computed).  Strata 0.1.42 port.
+    int64_t tail_skipped = 0;
+    int64_t tail_experts = 0;
     double ms_plan = 0, ms_actq = 0, ms_jobs = 0, ms_run = 0;   ///< verify-window dispatch sections
     /// Plan v0.3 P6: decayed routing counts per (layer, expert) during decode (sized by the caller; empty = off),
     /// which the driver uses to swap the most-routed missing experts into the VRAM tier between rounds.
@@ -404,6 +428,13 @@ void expert_pool_dispatch(void* user, const float* x_f, const int32_t* ids, cons
 /// Plan v0.3 P6: the pool for a verify window of `n_tok` tokens.  `x_f` is (n_tok, n_embd), `ids` (n_tok, k) and
 /// `out` (n_tok * k, n_embd).  Each distinct missed expert is computed once for all the tokens routed to it;
 /// resident experts' rows are zeroed (the GPU adds them).  Requires `host_res` (the token-graph residency).
+/// HYPERCORE_ROUTE_TAIL_SKIP=R: the rank from which a missed expert that every token of the window routes that
+/// low is skipped: neither copied over PCIe nor computed on the CPU, its output row left zero.  0 turns it off.
+/// On CUDA the serve start-up sets 7 (measured +13-16% decode); nothing else does, so a plain `generate` run
+/// keeps the old behaviour.  A window of one token is never touched.
+int tail_skip_rank();
+void set_tail_skip_rank(int r);
+
 void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32_t* ids, int64_t n_tok, int64_t k,
                                 float* out);
 

@@ -548,6 +548,8 @@ struct Options {
     /// Plan v0.3 P6: the share (0..1) of each layer's distinct missed experts the GPU reads over PCIe from the
     /// pinned arena while the CPU computes the rest (verify windows).
     double pcie_frac = -1.0;   ///< < 0: the model's default (0.2 direct for the Q2_0 pack, 0.55 DMA for native packs)
+    bool pcie_frac_auto = false;     ///< CUDA single-GPU serve, no --pcie-frac: the share is refined in the first decode windows (PcieAuto)
+    double pcie_probe_gbps = 0.0;    ///< the start-up probe's reading, kept for PcieAuto
     std::string pcie_mode = "auto";   ///< auto | dma | kernel | direct
     /// Plan v0.3 P6: every `adapt_every` rounds, swap up to `adapt_swaps` of the most-routed missing experts into
     /// the VRAM tier in place of the least-routed resident ones (decayed counts).  0 = static residency.
@@ -1498,6 +1500,50 @@ double pcie_frac_for_gbps(double gbps, double base) {
     return gbps <= 0.0 ? base : base * std::min(1.0, gbps / 20.0);
 }
 
+// CUDA single-GPU serve with no --pcie-frac: the default share refined from what the CPU pool measures in the first
+// decode windows.  The balance share of the missed experts is link / (link + CPU rate).  The link is the start-up
+// probe; the CPU rate is the expert bytes over the pool's wall time per missed expert (PoolMultiFn::ms_run /
+// multi_misses), which the engine already times.  The best shares measured with the route tail skip on (RTX 3060
+// 0.15-0.20, Tesla P100 0.20, RTX A4000 flat from 0.15 to 0.40; the probe rule alone gave 0.55, 0.29, 0.30) lie
+// within one 0.05 step of link / (link + 1.85 x pool rate).  Three updates at most (after 48, then 96 and 96 more
+// windows), each rounded to 0.05, so a noisy window cannot move the share by less than a step and it stops moving
+// after the third.  HYPERCORE_PCIE_FRAC_DEFAULT=old keeps the start-up rule.
+struct PcieAuto {
+    static constexpr double kPoolFactor = 1.85;
+    bool on = false;
+    double link_gbps = 0.0, blob_bytes = 0.0;
+    double mark_ms = 0.0;
+    int64_t mark_jobs = 0;
+    double acc_ms = 0.0;
+    int64_t acc_jobs = 0;
+    int acc_win = 0, updates = 0;
+    void mark(double ms_run, int64_t jobs) { mark_ms = ms_run; mark_jobs = jobs; }
+    /// After a decode window: the new share, or -1 while there is nothing to change.  `tc_us`/`rate` get the reading.
+    double window(double ms_run, int64_t jobs, double cur, double* tc_us, double* rate) {
+        if (!on) return -1.0;
+        acc_ms += ms_run - mark_ms;
+        acc_jobs += jobs - mark_jobs;
+        mark(ms_run, jobs);
+        ++acc_win;
+        if (acc_win < (updates == 0 ? 48 : 96)) return -1.0;
+        if (acc_jobs < 300) {          // too few missed experts to read the pool's speed (everything hits): look again
+            if (acc_win >= 2000) on = false;
+            return -1.0;
+        }
+        const double tc = acc_ms * 1000.0 / (double) acc_jobs;
+        acc_ms = 0.0;
+        acc_jobs = 0.0;
+        acc_win = 0;
+        if (++updates >= 3) on = false;
+        if (!(tc > 1.0) || !(blob_bytes > 0.0) || !(link_gbps > 0.0)) return -1.0;
+        const double r = blob_bytes / (tc * 1e-6) / 1e9;
+        const double f = std::min(0.60, std::max(0.10, std::round(link_gbps / (link_gbps + kPoolFactor * r) * 20.0) / 20.0));
+        *tc_us = tc;
+        *rate = r;
+        return std::fabs(f - cur) < 0.025 ? -1.0 : f;
+    }
+};
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -2362,6 +2408,11 @@ int main(int argc, char** argv) {
             o.pcie_frac = pcie_frac_for_gbps(bw, base);
             std::fprintf(stderr, "hypercore generate: PCIe probe: %.1f GB/s host->device (best of %s) -> pcie_frac %.2f "
                                  "(default %.2f)\n", bw, bursts.c_str(), o.pcie_frac, base);
+#if !defined(HYPERCORE_USE_HIP)
+            const char* pfd = std::getenv("HYPERCORE_PCIE_FRAC_DEFAULT");
+            o.pcie_frac_auto = o.layer_split.empty() && !(pfd != nullptr && std::strcmp(pfd, "old") == 0);
+            o.pcie_probe_gbps = bw;
+#endif
         } else {
             o.pcie_frac = base;
             std::fprintf(stderr, "hypercore generate: PCIe probe failed -> pcie_frac default %.2f\n", base);
@@ -4359,8 +4410,10 @@ int main(int argc, char** argv) {
     drive.d.jobs.resize((size_t) K);
     // CS-T: routing-aware prefetch of the file tier (the GGUF in place): the next layer's router on this layer's MoE
     // input predicts its experts and their pages are warmed meanwhile.  It only warms pages; HYPERCORE_LOOKAHEAD=0 is
-    // the A/B arm, HYPERCORE_LOOKAHEAD_K the experts per token (default 10).
+    // the A/B arm, HYPERCORE_LOOKAHEAD_K the experts per token (default 10).  HYPERCORE_LOOKAHEAD_STATS=1 (the Strata
+    // 0.1.42 look-ahead stats) additionally scores that prediction against the real routing, every 100 windows.
     hypercore::core::RouterLookahead lookahead;
+    const bool la_stats = [] { const char* v = std::getenv("HYPERCORE_LOOKAHEAD_STATS"); return v != nullptr && std::atoi(v) != 0; }();
     if (srcp == &src && src.warms() && [] { const char* v = std::getenv("HYPERCORE_LOOKAHEAD"); return v == nullptr || std::atoi(v) != 0; }()) {
         std::vector<std::vector<uint16_t>> routers((size_t) g.n_layers);
         bool ok = true;
@@ -4375,7 +4428,9 @@ int main(int argc, char** argv) {
         const char* kv = std::getenv("HYPERCORE_LOOKAHEAD_K");
         if (ok && lookahead.start(std::move(routers), g.n_embd, g.n_expert, kv ? std::atoi(kv) : 10, &src, err)) {
             drive.d.lookahead = &lookahead;
-            std::fprintf(stderr, "hypercore generate: routing-aware prefetch of the file tier on (the next layer's router)\n");
+            if (la_stats) lookahead.enable_stats(g.n_layers);
+            std::fprintf(stderr, "hypercore generate: routing-aware prefetch of the file tier on (the next layer's router)"
+                                 "%s\n", la_stats ? " with the look-ahead stats" : "");
         } else {
             (void) cudaGetLastError();
             std::fprintf(stderr, "hypercore generate: routing-aware prefetch off (%s)\n",
@@ -6688,8 +6743,38 @@ int main(int argc, char** argv) {
         drive.d.pcie_num = std::max(0, std::min(256, (int) (o.pcie_frac * 256.0 + 0.5)));
         const bool all_experts_resident = !host_res.empty() &&
             std::all_of(host_res.begin(), host_res.end(), [](int32_t r) { return r >= 0; });
+        // HYPERCORE_ROUTE_TAIL_SKIP (the Strata 0.1.42 tail skip), on by default on CUDA builds: a missed expert
+        // that every token of a verify window routes only at rank 7 or lower is neither copied nor computed.  A
+        // plain `generate` run does not set it; only serve does.  =0 turns it off.  Nothing to skip when every
+        // expert is in VRAM, and it is off with --batch slots (a window then mixes requests) or a peer/helper GPU.
+        {
+            const char* tse = std::getenv("HYPERCORE_ROUTE_TAIL_SKIP");
+#if !defined(HYPERCORE_USE_HIP)
+            if (tse == nullptr && !all_experts_resident && drive.d.peer == nullptr && drive.d.remote_count == 0 &&
+                o.batch <= 0)
+                hypercore::core::set_tail_skip_rank(7);
+            else if (tse != nullptr)
+                hypercore::core::set_tail_skip_rank(std::atoi(tse));
+#else
+            if (tse != nullptr) hypercore::core::set_tail_skip_rank(std::atoi(tse));
+#endif
+            if (hypercore::core::tail_skip_rank() > 0)
+                std::fprintf(stderr, "hypercore serve: the tail skip is on: an expert every token of a verify "
+                                     "window routes only at rank >= %d is skipped (HYPERCORE_ROUTE_TAIL_SKIP=0 "
+                                     "turns it off)\n", hypercore::core::tail_skip_rank());
+        }
         if (o.adapt_every > 0 && o.adapt_swaps > 0 && !all_experts_resident)
             drive.d.usage.assign((size_t) (g.n_layers * g.n_expert), 0.0f);
+        // the start-up probe's share, refined in the first decode windows from the CPU pool's measured speed
+        PcieAuto pcie_auto;
+        if (o.pcie_frac_auto && native_pack && !all_experts_resident && o.batch == 0 && o.peer_device < 0 && n_stages == 1) {
+            const auto& pl = hypercore::kernels::cpu::expert_layout();
+            double sum = 0.0;
+            for (int64_t l = 0; l < g.n_layers; ++l) sum += (double) pl.blob_bytes(l);
+            pcie_auto.on = true;
+            pcie_auto.link_gbps = o.pcie_probe_gbps;
+            pcie_auto.blob_bytes = g.n_layers > 0 ? sum / (double) g.n_layers : 0.0;
+        }
         // #477 --expert-profile-save: what the adaptive tier learned, kept across restarts (opt-in; off: `heat` stays
         // empty and nothing below runs).  It needs the adaptive tier's counts and the residency table.
         std::vector<double> heat;
@@ -9080,6 +9165,7 @@ int main(int argc, char** argv) {
             const uint64_t file_bytes0 = src.file_read_bytes();
             const int64_t decode_look0 = drive.d.cache_hits + drive.d.cache_admitted + drive.d.cache_refused;
             const int64_t offload0 = drive.d.offload_entries;   // #588
+            pcie_auto.mark(drive.d.ms_run, drive.d.multi_misses);   // the prompt's windows are not the decode's
             if (cancelled) finish = "cancel";
             // ======== --pipeline-windows 2: the decode windows with the two cards overlapped ========
             // Stage 0 (the first card) runs window K+1 while stage 1 verifies window K, on the guess that K is accepted
@@ -9795,6 +9881,21 @@ int main(int argc, char** argv) {
                     dt_run += msd(tw0, tw1); dt_commit += msd(tw1, tw2); dt_draft += msd(tw2, tw3);
                     ++dec_windows; dec_T += T;
                 }
+                if (pcie_auto.on) {   // the default share, refined from the CPU pool's speed; a request's own share is left alone
+                    double tc_us = 0.0, rate = 0.0;
+                    const double nf = req_pcie_frac == o.pcie_frac
+                                          ? pcie_auto.window(drive.d.ms_run, drive.d.multi_misses, o.pcie_frac, &tc_us, &rate)
+                                          : (pcie_auto.mark(drive.d.ms_run, drive.d.multi_misses), -1.0);
+                    if (nf >= 0.0) {
+                        std::fprintf(stderr, "hypercore serve: PCIe share: the CPU pool takes %.0f us per missed expert (%.1f GB/s of expert bytes), "
+                                             "the link %.1f GB/s -> pcie_frac %.2f (was %.2f; --pcie-frac N fixes it, "
+                                             "HYPERCORE_PCIE_FRAC_DEFAULT=old keeps the start-up rule)\n",
+                                     tc_us, rate, pcie_auto.link_gbps, nf, o.pcie_frac);
+                        o.pcie_frac = nf;
+                        req_pcie_frac = nf;
+                        drive.d.pcie_num = std::max(0, std::min(256, (int) (nf * 256.0 + 0.5)));
+                    }
+                }
                 if (adapt_thr.joinable()) adapt_thr.join();
                 if (!adapt_ok) {
                     std::printf("ERR an adaptive refill failed\n");
@@ -10072,6 +10173,9 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "hypercore serve: exchange rotation: %llu blocks, %llu host memcpy bytes avoided (cumulative payload)\n",
                              (unsigned long long)src.rotated_exchanges(),
                              (unsigned long long)src.avoided_exchange_copy_bytes());
+            if (drive.d.tail_experts > 0)   // HYPERCORE_ROUTE_TAIL_SKIP, cumulative
+                std::fprintf(stderr, "hypercore serve: route tail skip: %lld missed experts skipped (%lld entries) "
+                                     "since the start\n", (long long) drive.d.tail_experts, (long long) drive.d.tail_skipped);
             // CS-T: the tiers, cumulative - GPU cache hits (the decode lookups above), RAM copy, files (SSD / OS cache)
             if (srcp == &src)
                 std::fprintf(stderr, "hypercore serve: expert tiers: GPU %lld hits this request; since the start RAM %lld blobs, files %lld blobs "

@@ -2,6 +2,8 @@
 # HyperCore for Linux: the first run installs everything and starts the model; later runs just start it.
 # Needs only an NVIDIA driver (or, for an AMD Radeon card, the kernel's amdgpu driver: see docs/AMD_HIP.md).
 # Python (with venv) is installed through apt/dnf if it is missing (asks for sudo).
+# Every run config and run script setup writes defaults to host 0.0.0.0, the API key 0000, port 8081 and the
+# end-of-turn check on; --host, --api-key, --port and --no-turn-tail-check change that for one model.
 cd "$(dirname "$0")" || exit 1
 # Python 3.10+ that can make a venv WITH pip: Debian/Ubuntu ship `venv` without `ensurepip` (that is the separate
 # python3-venv package), and a venv made without it has no pip
@@ -36,4 +38,11 @@ if [ ! -x .venv/bin/python ]; then
   # a private environment inside this folder (system Python stays untouched; newer distros refuse global pip)
   $PY -m venv .venv || { rm -rf .venv; echo "could not create .venv: sudo apt install python3-venv"; exit 1; }
 fi
+# the defaults setup.py writes into hypercore-<model>.json and run-<model>.sh; set them here to change
+# them for every model this copy sets up, or per model with --host / --api-key / --port / --no-turn-tail-check
+: "${HYPERCORE_DEFAULT_HOST:=0.0.0.0}"
+: "${HYPERCORE_DEFAULT_API_KEY:=0000}"
+: "${HYPERCORE_DEFAULT_PORT:=8081}"
+: "${HYPERCORE_DEFAULT_TURN_TAIL_CHECK:=1}"
+export HYPERCORE_DEFAULT_HOST HYPERCORE_DEFAULT_API_KEY HYPERCORE_DEFAULT_PORT HYPERCORE_DEFAULT_TURN_TAIL_CHECK
 exec .venv/bin/python setup.py "$@"

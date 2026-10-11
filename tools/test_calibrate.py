@@ -19,14 +19,16 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT))
-import calibrate as CAL  # noqa: E402
+import calibrate as CAL
 
 
 class FakeEngine:
     """Speed = f(pcie_frac, spec_min_p, workers): the GEN line's tune keys arrive as `hypercore_tune`."""
 
-    def __init__(self, args, speed, info_workers=6, starts=None):
+    def __init__(self, args, speed, info_workers=6, starts=None, adapt=None, tail=None):
         self.args = list(args)
+        self.adapt_bonus = (adapt or {}).get(CAL.arg_value(args, "--adapt-swaps"), 1.0)
+        self.tail_bonus = tail or {}          # {"off": 1.10}: the speed with the tail skip turned off
         w = CAL.arg_value(args, "--pool-workers")
         self.workers = int(w) if w else info_workers
         self.info = {"pool_workers": info_workers, "pcie_frac": 0.55, "spec_min_p": float(CAL.arg_value(args, "--spec-min-p") or 0)}
@@ -39,6 +41,9 @@ class FakeEngine:
     def generate(self, ids, max_new, sampling, cancel):
         tune = sampling.get("hypercore_tune") or {}
         rate = self.speed(tune.get("pcie_frac", 0.55), tune.get("spec_min_p", self.info["spec_min_p"]), self.workers)
+        rate *= self.adapt_bonus
+        if os.environ.get(CAL.TAIL_SKIP_ENV) == "0":
+            rate *= self.tail_bonus.get("off", 1.0)
         for _ in range(max_new):
             yield 1
         self.last = {"generated": max_new, "decode_ms": max_new / rate * 1000.0}
@@ -48,9 +53,15 @@ BASE = ["--pack", "p", "--spec", "4", "--spec-min-p", "0.5", "--max-context", "8
 
 
 class Calibrate(unittest.TestCase):
-    def run_with(self, speed, workers=6, base=BASE):
+    def run_with(self, speed, workers=6, base=BASE, adapt=None, tail=None, envs=None):
         starts = []
-        res = CAL.measure(base, [[1, 2, 3]] * 3, lambda a: FakeEngine(a, speed, workers, starts), say=lambda *_: None)
+
+        def start(a):
+            if envs is not None:
+                envs.append(os.environ.get(CAL.TAIL_SKIP_ENV))   # what the engine saw at its own start
+            return FakeEngine(a, speed, workers, starts, adapt, tail)
+
+        res = CAL.measure(base, [[1, 2, 3]] * 3, start, say=lambda *_: None)
         return res, starts
 
     def test_defaults_kept_when_flat(self):
@@ -74,8 +85,82 @@ class Calibrate(unittest.TestCase):
         # a hybrid CPU: half the workers is 20% faster
         res, starts = self.run_with(lambda f, p, w: 60.0 if w == 3 else 50.0, workers=6)
         self.assertEqual(res["settings"].get("--pool-workers"), "3")
-        self.assertEqual(len(starts), 1 + len(CAL.worker_candidates(6)))   # one start per worker count, plus the sweep
+        # one start per worker count, per expert-tier candidate and per tail-skip candidate, plus the sweep
+        self.assertEqual(len(starts), 1 + len(CAL.worker_candidates(6)) + len(CAL.ADAPT_CANDIDATES)
+                        + len(CAL.TAIL_CANDIDATES))
         self.assertEqual(CAL.arg_value(starts[0], "--spec-min-p"), "0.5")   # measured against the product default
+
+    def test_a_failed_restart_keeps_the_measurements_1337(self):
+        # the top PCIe share wins by far; every later restart (the worker counts, the expert tier) fails to start
+        n = {"starts": 0}
+
+        def start(args):
+            n["starts"] += 1
+            if n["starts"] > 1:
+                raise RuntimeError("the engine exited before it was ready: cudaMalloc failed (213 MiB free)")
+            return FakeEngine(args, lambda f, p, w: 80.0 if f == 0.75 else 50.0, 6)
+        said = []
+        res = CAL.measure(BASE, [[1, 2, 3]] * 3, start, say=said.append)
+        self.assertEqual(res["settings"].get("--pcie-frac"), "0.75")        # steps 1-3 survived
+        self.assertGreater(len(res["report"]["failed_starts"]), 1)
+        self.assertTrue(any("did not start" in x and "cudaMalloc" in x for x in said))
+        self.assertEqual(res["report"]["workers"], {})
+        self.assertEqual(res["report"]["adapt"], {})
+
+    def test_one_failing_worker_count_only_drops_that_candidate_1337(self):
+        def start(args):
+            if CAL.arg_value(args, "--pool-workers") == "3":
+                raise RuntimeError("out of memory")
+            return FakeEngine(args, lambda f, p, w: 60.0 if w == 2 else 50.0, 6)
+        res = CAL.measure(BASE, [[1, 2, 3]] * 3, start, say=lambda *_: None)
+        self.assertEqual(res["settings"].get("--pool-workers"), "2")
+        self.assertEqual(list(res["report"]["failed_starts"]), ["3 workers"])
+
+    def test_adaptive_tier(self):
+        # a slow-RAM PC: swapping 160 experts per round is 10% faster, 80 is 2% (noise)
+        res, starts = self.run_with(lambda f, p, w: 50.0, adapt={"160": 1.10, "80": 1.02})
+        self.assertEqual([res["settings"].get(f) for f in CAL.ADAPT_FLAGS], ["1", "160", "0.97"])
+        flat, _ = self.run_with(lambda f, p, w: 50.0, adapt={"160": 1.02})
+        self.assertFalse(any(f in flat["settings"] for f in CAL.ADAPT_FLAGS))
+        # the candidates are measured with the worker count chosen before
+        res, starts = self.run_with(lambda f, p, w: 60.0 if w == 3 else 50.0, workers=6, adapt={"160": 1.10})
+        self.assertEqual(res["settings"].get("--pool-workers"), "3")
+        self.assertTrue(all(CAL.arg_value(a, "--pool-workers") == "3" for a in starts[-len(CAL.ADAPT_CANDIDATES):]))
+        a = CAL.apply(BASE, res["settings"])
+        self.assertEqual(CAL.arg_value(a, "--adapt-swaps"), "160")
+        self.assertIsNone(CAL.arg_value(CAL.apply(a, {}), "--adapt-swaps"))
+        # the tier's step is longer than the sweep's, so the effect can show
+        self.assertEqual(CAL.TIER_MAX_NEW, 512)
+
+    def test_the_tail_skip_is_measured_and_only_kept_when_it_wins(self):
+        # turning it off is 10% faster here: the setting is written, and the engine is started with the
+        # variable set for that candidate and unset for the other
+        envs: list = []
+        res, _ = self.run_with(lambda f, p, w: 50.0, tail={"off": 1.10}, envs=envs)
+        self.assertEqual(res["env"], {CAL.TAIL_SKIP_ENV: "0"})
+        self.assertEqual(res["report"]["tok_s"], 55.0)
+        # the variable is set in the environment at the start, not in the args: one candidate sees it, one does not
+        self.assertEqual(envs.count("0"), 1)
+        self.assertIsNone(envs[-2])          # the engine's own rank is measured with the variable unset
+        self.assertNotIn(CAL.TAIL_SKIP_ENV, os.environ)                # the environment is restored
+        # a 2% gain is inside the noise floor: nothing is written
+        flat, _ = self.run_with(lambda f, p, w: 50.0, tail={"off": 1.02})
+        self.assertEqual(flat["env"], {})
+        self.assertIn("engine default", flat["report"]["tail_skip"])
+        self.assertIn("off", flat["report"]["tail_skip"])
+
+    def test_the_link_is_read_without_a_card_and_never_raises(self):
+        self.assertEqual(CAL.link_info({}), {})                       # no GPU in the test box
+        self.assertEqual(CAL.link_info({"gpu": [0], "backend": "hip"}), {})
+
+    def test_the_sweep_rotates_and_reports_medians(self):
+        seen = []
+        s = CAL.Session(FakeEngine(BASE, lambda f, p, w: 50.0), [[1, 2, 3]] * 3)
+        out = CAL.sweep(s, [0.0, 0.2, 0.55], {"spec_min_p": 0.5}, "pcie_frac", "PCIe share", seen.append)
+        self.assertEqual({k: len(v) for k, v in out.items()}, {0.0: 3, 0.2: 3, 0.55: 3})
+        # round 1 forward, round 2 reversed, round 3 forward: every value is visited the same number of times
+        self.assertEqual(len(seen), CAL.SWEEP_ROUNDS + 1)
+        self.assertIn("median of 3", seen[-1])
 
     def test_old_calibration_is_the_baseline_reset(self):
         # a config tuned earlier: the measurement starts from the product defaults, not from those values
@@ -147,7 +232,10 @@ class Calibrate(unittest.TestCase):
         self.assertEqual(CAL.worker_candidates(23), [23, 15, 12, 6])        # a quarter: 4 beat 15 on 8P + 16E
         self.assertEqual(CAL.worker_candidates(23, (7,)), [23, 15, 12, 6, 7])   # P-cores - 1
         self.assertEqual(CAL.worker_candidates(35, (17,)), [35, 23, 18, 9, 17])  # 2 sockets: one socket's cores - 1
-        self.assertEqual(CAL.worker_candidates(6, (6, 1, 9)), [6, 4, 3, 2])      # none above the default, none below 2
+        self.assertEqual(CAL.worker_candidates(15, (7, 23)), [15, 10, 8, 4, 7, 23])  # a config that pins 15 still
+        # measures the engine's own count (24 physical cores minus the host's) and the P-cores
+        self.assertEqual(CAL.worker_candidates(6, (6, 1, 9)), [6, 4, 3, 2, 9])    # an extra above the default is kept
+        self.assertEqual(CAL.worker_candidates(6, (1, 200)), [6, 4, 3, 2])        # none below 2, none over 128
         self.assertEqual(CAL.worker_candidates(3), [3, 2])
         self.assertEqual(CAL.worker_candidates(1), [1])
 
@@ -267,10 +355,33 @@ class DefaultEnginePath(unittest.TestCase):
             CAL.close(eng)
         self.assertFalse(eng.alive(), "close() must stop the supervisor, not just send QUIT")
 
+    def test_the_tuning_worker_is_given_the_model_load_allowance(self):
+        """The tuning run loads the real model. With the supervisor's 30 s default the
+        calibration stopped at "worker did not accept a connection within 30.0s" on a PC
+        that starts the same model without trouble (setup --setup, Step 7).
+        """
+        from serve.hypercore_supervisor import HyperCoreProcessSupervisor
+        seen = {}
+        real = HyperCoreProcessSupervisor
+
+        class Spy(real):
+            def __init__(self, **kw):
+                seen.update(kw)
+                super().__init__(**kw)
+
+        worker = self.scripted()
+        with mock.patch("serve.hypercore_supervisor.HyperCoreProcessSupervisor", Spy):
+            eng = CAL.worker_engine({"args": list(BASE), "exe": "/engine/hypercore"},
+                                   list(BASE), transport=worker.connect)
+            CAL.close(eng)
+        self.assertEqual(seen.get("startup_timeout_s"), 180.0,
+                        "the tuning worker must get the model's start allowance, not 30 s")
+
+
     def test_measure_runs_end_to_end_against_the_real_handler(self):
         worker = self.scripted()
         cfg = {"args": list(BASE)}
-        start = lambda args: CAL.worker_engine(cfg, args, transport=worker.connect)  # noqa: E731
+        start = lambda args: CAL.worker_engine(cfg, args, transport=worker.connect)
         res = CAL.measure(list(BASE), [[1, 2, 3]] * 3, start, say=lambda *_: None)
         self.assertTrue(res["report"]["default"], "the instance baseline was never read")
         self.assertGreater(res["report"]["default"]["pcie_frac"], 0.0)

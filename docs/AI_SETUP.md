@@ -2,7 +2,7 @@
 
 This page is written for an AI coding assistant (Claude Code, Cursor, Codex, GitHub Copilot, ...) that a user asked to
 set up HyperCore on their PC. HyperCore runs the Qwen3.8-Flash-Next model locally on one NVIDIA or AMD graphics card plus
-system RAM, and serves an OpenAI- and Anthropic-compatible API on `http://127.0.0.1:8080`. The human-oriented
+system RAM, and serves an OpenAI- and Anthropic-compatible API on `http://127.0.0.1:8081`. The human-oriented
 version of everything below is [INSTALL.md](INSTALL.md).
 
 Work through the steps in order. Tell the user what you are doing in plain words; they may not be technical.
@@ -99,7 +99,7 @@ The flags (all of them: `START-HERE.bat --help`):
 | `--gpu N` / `--gpus 0,1` / `--gpus all` | one card, or several sharing the model (default: the card with the most VRAM) |
 | `--backend cuda\|hip` | NVIDIA or AMD engine; chosen by itself on a PC with only one kind of card |
 | `--data-dir PATH` | where the 70-120 GB of model files go |
-| `--port N` | the server port (default 8080) |
+| `--port N` | the server port (default 8081) |
 | `--host H --api-key K` | listen beyond this PC; **only together with a key** |
 | `--no-start` | install only, do not start the server |
 | `--setup` | install another model or change settings of an installed one |
@@ -141,7 +141,7 @@ Linux:                 nohup ./run-iq2_xs.sh > hypercore-server.out 2>&1 &
 ```
 
 Or `START-HERE.bat` / `./setup.sh` without flags, which starts the installed model (it asks which one when several are
-installed; add `--yes` to take the first). The server opens the user's browser on `http://127.0.0.1:8080` when it is
+installed; add `--yes` to take the first). The server opens the user's browser on `http://127.0.0.1:8081` when it is
 ready. Closing its window (or stopping the process) stops the model.
 
 ## 7. Verify
@@ -149,29 +149,29 @@ ready. Closing its window (or stopping the process) stops the model.
 The HTTP server answers once the model is loaded (30-90 s on later starts, a few minutes the first time). Poll:
 
 ```
-curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8081/health
 ```
 
 It returns `{"status": "ok", "model": ..., "max_context": ..., "images": ..., "api_key": ..., "loaded": true, ...}`.
 Then:
 
 ```
-curl http://127.0.0.1:8080/v1/models
-curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\": \"hypercore\", \"messages\": [{\"role\": \"user\", \"content\": \"Say hello in five words.\"}], \"max_tokens\": 64, \"reasoning_effort\": \"none\"}"
+curl http://127.0.0.1:8081/v1/models
+curl http://127.0.0.1:8081/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\": \"hypercore\", \"messages\": [{\"role\": \"user\", \"content\": \"Say hello in five words.\"}], \"max_tokens\": 64, \"reasoning_effort\": \"none\"}"
 ```
 
-With an API key, add `-H "Authorization: Bearer <key>"`. The server window prints a `ready: http://127.0.0.1:8080/v1`
+With an API key, add `-H "Authorization: Bearer <key>"`. The server window prints a `ready: http://127.0.0.1:8081/v1`
 line when it is ready; the engine log is `hypercore-<model>.log` in the HyperCore folder.
 
 ## 8. Connect the user's apps
 
-- **Browser:** `http://127.0.0.1:8080` - Chat, a live Monitor, and About (settings and addresses).
-- **Any OpenAI-compatible app or agent:** base URL `http://127.0.0.1:8080/v1`, any API key (or the configured one),
+- **Browser:** `http://127.0.0.1:8081` - Chat, a live Monitor, and About (settings and addresses).
+- **Any OpenAI-compatible app or agent:** base URL `http://127.0.0.1:8081/v1`, any API key (or the configured one),
   any model name.
-- **Anthropic-compatible apps:** `http://127.0.0.1:8080/v1/messages`.
-- **Codex CLI and other Responses API apps:** `http://127.0.0.1:8080/v1/responses` (stateless; Codex's
+- **Anthropic-compatible apps:** `http://127.0.0.1:8081/v1/messages`.
+- **Codex CLI and other Responses API apps:** `http://127.0.0.1:8081/v1/responses` (stateless; Codex's
   `config.toml`: [DETAILS.md](DETAILS.md#the-responses-api-and-codex-cli)).
-- **Claude Code:** `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`, `ANTHROPIC_MODEL` set to a Claude model name it knows
+- **Claude Code:** `ANTHROPIC_BASE_URL=http://127.0.0.1:8081`, `ANTHROPIC_MODEL` set to a Claude model name it knows
   (HyperCore ignores the name), and any `ANTHROPIC_AUTH_TOKEN` (or the configured key).
 - **Thinking level:** `"reasoning_effort": "none" | "low" | "medium" | "high"` (default high).
 - HyperCore answers one request at a time; `"parallel": N` in the model's config (or setup `--parallel N`) decodes up to
@@ -183,7 +183,7 @@ line when it is ready; the engine log is `hypercore-<model>.log` in the HyperCor
 | --- | --- |
 | `the NVIDIA driver is too old` | The user updates the driver (NVIDIA App or nvidia.com/drivers) and restarts; rerun setup. |
 | Download or install stopped | Rerun the same setup command; it continues. |
-| `port 8080 is already in use` | HyperCore is already running (check `/health`), or use `--port 8081`. |
+| `port 8081 is already in use` | HyperCore is already running (check `/health`), or use `--port 8082`. |
 | Very slow, disk busy, or "the engine stopped unexpectedly" | Not enough free RAM: close programs, or set up a smaller size (`--setup --model Q2_0` or IQ2_XS). |
 | `ExpertCache: cudaMalloc(...) failed: out of memory` with free VRAM (Windows) | The page file is off or tiny: set it to "System managed" and restart. |
 | `prompt ... exceeds the context` | Rerun setup with `--setup --context <bigger>`. |

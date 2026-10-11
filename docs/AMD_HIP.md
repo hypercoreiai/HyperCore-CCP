@@ -188,7 +188,7 @@ build-hip/hypercore --serve \
 `--serve` is the engine's internal token protocol. For a browser or OpenAI API,
 put these args in the `args` array of the [server JSON example](ORCA.md#local-server),
 set `exe` to `build-hip/hypercore`, and use the matching pack's `tokenizer` directory.
-Launch with `.venv/bin/python -m serve.server --engine hypercore --config hypercore-hip.json --port 8080`.
+Launch with `.venv/bin/python -m serve.server --engine hypercore --config hypercore-hip.json --port 8081`.
 The worker count above was used on a 16-core CPU; measure it for your CPU.
 The 4K context is a smoke-test starting point, not a model limit. The expert cache
 sizes itself automatically and leaves 1 GiB of VRAM headroom.

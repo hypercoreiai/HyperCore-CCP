@@ -93,7 +93,7 @@ it. `mtp/rt` is the base model's draft layer as always.
   "model_name": "qwen3.8-flash-next-ud-q6_k_xl",
   "log": "hypercore-ud-q6_k_xl.log",
   "host": "127.0.0.1",
-  "port": 8080
+  "port": 8081
 }
 ```
 

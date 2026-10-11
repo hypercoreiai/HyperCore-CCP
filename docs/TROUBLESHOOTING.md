@@ -19,7 +19,7 @@ Run `START-HERE.bat` (Linux: `./setup.sh`) again. It continues where it stopped.
 Update it (NVIDIA App or [nvidia.com/drivers](https://www.nvidia.com/drivers)), restart the PC, and run
 `START-HERE.bat` again.
 
-**It says port 8080 is already in use.**
+**It says port 8081 is already in use.**
 HyperCore is already running. Look for its window. Or another program uses the port: `START-HERE.bat --port 8081`.
 Only an address that is really taken says "already in use". Any other reason (Windows keeps the port reserved, or
 the config's `"host"` is not an address of this PC) is printed as what the OS said, with what to change (#769).

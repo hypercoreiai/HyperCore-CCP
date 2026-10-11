@@ -159,5 +159,47 @@ class ConfigShape(unittest.TestCase):
         self.assertEqual(out["batch"], 4)
 
 
+class WorkerEnvironment(unittest.TestCase):
+    """#1733: the engine settings a model config carries reach the worker it starts.
+
+    Calibration writes HYPERCORE_ROUTE_TAIL_SKIP and the hipBLASLt table into the config's "env".
+    A worker that inherits only the shell the server was launched from would never see them."""
+
+    def test_the_env_is_kept_and_cleaned(self):
+        from serve.hypercore_supervisor import HyperCoreProcessSupervisor
+        sup = HyperCoreProcessSupervisor(worker_binary="none",
+                                        env={"HYPERCORE_ROUTE_TAIL_SKIP": "7", "NOT_SET": None})
+        self.assertEqual(sup.env, {"HYPERCORE_ROUTE_TAIL_SKIP": "7"})
+        env = sup.child_environment()
+        self.assertEqual(env["HYPERCORE_ROUTE_TAIL_SKIP"], "7")
+        self.assertIn("PATH", env)   # the server's own environment stays underneath it
+
+    def test_no_env_means_the_inherited_one(self):
+        from serve.hypercore_supervisor import HyperCoreProcessSupervisor
+        self.assertEqual(HyperCoreProcessSupervisor(worker_binary="none").child_environment(), dict(os.environ))
+
+    def test_the_spawned_worker_gets_it(self):
+        from unittest import mock
+        from serve.hypercore_supervisor import HyperCoreProcessSupervisor
+        sup = HyperCoreProcessSupervisor(worker_binary="/bin/true", env={"HYPERCORE_ROUTE_TAIL_SKIP": "7"})
+        seen = {}
+
+        class NoWorker:
+            returncode = 1
+            def poll(self):
+                return 1
+
+        def fake_popen(cmd, **kw):
+            seen["env"] = kw.get("env")
+            return NoWorker()
+
+        with mock.patch.object(subprocess, "Popen", fake_popen):
+            try:
+                sup.start(timeout_s=0.1)
+            except Exception:   # the fake worker never reaches READY; the environment is what is under test
+                pass
+        self.assertEqual(seen["env"]["HYPERCORE_ROUTE_TAIL_SKIP"], "7")
+
+
 if __name__ == "__main__":
     unittest.main()

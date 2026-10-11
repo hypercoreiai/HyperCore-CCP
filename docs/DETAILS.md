@@ -203,7 +203,10 @@ A clamped budget no longer fails the safety check that follows (#403). A budget 
 warning, with every expert read from the files. Setup sets N with `--resident-budget-gib N`. With
 the GGUF read in place it also warms the next layer's likely experts: while the CPU works on a layer, a thread applies
 the next layer's router to this layer's input and asks the OS for the pages of the predicted experts that neither the
-GPU nor the RAM budget holds (only pages - the experts computed are the same; `HYPERCORE_LOOKAHEAD=0` turns it off). This
+GPU nor the RAM budget holds (only pages - the experts computed are the same; `HYPERCORE_LOOKAHEAD=0` turns it off).
+`HYPERCORE_LOOKAHEAD_STATS=1` additionally scores that prediction against the routing that actually happened, printed
+once per 100 windows (recall and precision at k, k+4 and k+10, and how much of the PCIe share the vote-ranked top of
+the prediction covers). It is measurement only: nothing it prints changes a decision.
 is what runs [Unsloth's UD-Q4_K_XL](UNSLOTH_Q4.md) (72 GiB of experts) on a 64 GB PC: 7-8.5 tokens/s at N = 40 on an
 RTX 5070, against ~3 tokens/s before these changes.
 
@@ -387,7 +390,7 @@ Windows, `build-essential` + CUDA on Ubuntu) and compiles the engine for your GP
 4. **Images?** yes / no (see [Images](#images-vision)).
 
 Then it downloads and prepares everything (the model is 66-76 GB, so the first start takes a while; an interrupted
-download continues where it stopped) and **starts the model**: your browser opens `http://127.0.0.1:8080`, the HyperCore
+download continues where it stopped) and **starts the model**: your browser opens `http://127.0.0.1:8081`, the HyperCore
 app. It has three tabs:
 - **Chat:** streaming answers, the model's thinking (folded away once it answers), code with a copy button, pictures when
   images are on, and sampling and thinking-level settings. Chats stay in your browser.
@@ -395,8 +398,8 @@ app. It has three tabs:
   VRAM, temperature, power and PCIe traffic; CPU, RAM and disk; the context in use; the last requests.
 - **About:** the model and engine settings, and the addresses to connect other apps.
 
-`http://127.0.0.1:8080/?q=your question` opens it with a new chat already asking. The API is at
-`http://127.0.0.1:8080/v1` for your apps.
+`http://127.0.0.1:8081/?q=your question` opens it with a new chat already asking. The API is at
+`http://127.0.0.1:8081/v1` for your apps.
 
 **Every time after that**, `START-HERE.bat` just starts the model (30-90 s to load 34-43 GB into RAM). Nothing is
 downloaded again. Closing the window stops the model.
@@ -409,21 +412,45 @@ START-HERE.bat --gguf-dir D:\models\IQ2_XS       use GGUF files you already have
 START-HERE.bat --data-dir E:\HyperCore-data         keep the model files somewhere else
 START-HERE.bat --port 8081                      another port
 START-HERE.bat --gpu 1                          another GPU (numbered as nvidia-smi; setup picks the one with the most VRAM)
-START-HERE.bat --calibrate                      tune the engine for this PC (about 5-10 minutes), then start
+START-HERE.bat --calibrate                      tune the engine for this PC (about 15-30 minutes, longer on a slow card), then start
 ```
 
 With more than one model installed, it asks which one to start. `run-<model>.bat` starts a model directly.
 
-**Tuning for your PC (`--calibrate`, engine 0.1.19).** Three engine settings depend on the PC more than on the model:
+**Tuning for your PC (`--calibrate`, engine 0.1.19).** Four engine settings depend on the PC more than on the model:
 - the share of the experts missing from VRAM that are copied to the GPU instead of computed by the CPU
-  (`--pcie-frac`: a fast PCIe link and a slower CPU want more, a laptop's narrower link less);
+  (`--pcie-frac`: a fast PCIe link and a slower CPU want more, a laptop's narrower link less). With no
+  `--pcie-frac` on a single CUDA GPU the engine now refines that share itself in the first decode windows, from the
+  CPU pool's measured time per missed expert and the start-up link probe: three updates at most (after 48 windows,
+  then 96 and 96 more), each rounded to 0.05, and a request that sets its own share is left alone. `HYPERCORE_PCIE_FRAC_DEFAULT=old`
+  keeps the start-up rule; `--calibrate` still measures the share outright and writes it into the profile, which
+  turns the refinement off for that run.
 - how sure the draft layer must be to add another guess to a check (`--spec-min-p`);
-- how many CPU threads compute experts (`--pool-workers`: on CPUs with efficiency cores, fewer can be faster).
+- how many CPU threads compute experts (`--pool-workers`: on CPUs with efficiency cores, fewer can be faster). The
+  sweep now also tries the engine's own count (every physical core but the host's) when the run config already pins
+  a lower one, so a PC where more cores are faster is not stuck with the recommendation it was given;
+- the route tail skip (engine 0.1.41, ported from Strata 0.1.42): on CUDA serve, a missed expert that every token
+  of a verify window routes only at rank 7 or lower is neither copied over PCIe nor computed - its output row is
+  left zero. It is on by default when some experts are not resident and off with `--batch` slots or a peer/helper
+  GPU; `HYPERCORE_ROUTE_TAIL_SKIP=0` restores the previous behaviour, and the engine prints the count of skipped
+  experts in its serve log.
+- how busily the VRAM expert cache follows the conversation (`--adapt-every`, `--adapt-swaps`, `--adapt-decay`): a PC
+  whose CPU reads the missed experts slowly (DDR3 or DDR4 in few channels) gains from swapping more. The figure
+  quoted below is Strata 0.1.42's measurement on that machine, not a run in this workspace: on a Xeon E5-2673 v3
+  with DDR3 and an RTX 4060 Ti on PCIe 3.0 x8, 160 swaps every window measured +7.9% over the default (Q2_0, with
+  the swaps taking effect a window later, #764); see #906.
 
 The defaults were measured on a Ryzen 5 7600 with an RTX 5070. Setup offers to measure them on your PC after an
 install; `START-HERE.bat --calibrate` (Linux: `./setup.sh --calibrate`) does it any time. It measures the output
 speed with each setting and keeps one only when it is more than 3% faster. The result is remembered per PC and model
 (in the settings file next to the data folder's record), so updates keep it.
+
+Each value of the PCIe share and the draft floor is measured three times, the order of the values reversed between
+rounds (#1332): neighbours like 0.75 and 0.95 sit inside each other's noise, and a box can move 8-28% between engine
+starts at an unchanged setting. The winner is taken from the medians, so every value keeps the same chance. Measuring
+the worker count and the expert tier needs a fresh engine, so the model is loaded more than once: the PC is busy, and
+can stop responding for a minute or two, once per restart. A restart that fails is a candidate that loses, not a
+failed run: what the earlier steps measured is kept (#1337).
 
 ### Running it at startup (Task Scheduler)
 
@@ -462,7 +489,7 @@ slowly, the engine prints a hint under its `loaded ... GiB at ...` line naming t
 ```
 
 The same questions, the same automatic install (it uses `sudo apt` for Python and, only if it has to compile,
-for the build tools), and the same start: `http://127.0.0.1:8080`. Later runs of `./setup.sh` (or `./run-<model>.sh`)
+for the build tools), and the same start: `http://127.0.0.1:8081`. Later runs of `./setup.sh` (or `./run-<model>.sh`)
 start the model directly. Options as on Windows (`./setup.sh --setup`, `--model Q2_0 --yes`, `--gguf-dir /data/Q2_0`).
 Terminal chat: `.venv/bin/python chat.py`.
 
@@ -489,7 +516,7 @@ server, three server options (all off by default; also as keys in `hypercore-<mo
 | `--before-load "cmd"` | `"before_load": "cmd"` or `["cmd", "arg"]` | a command run before the model is loaded again, e.g. one that unloads another server's model |
 
 `POST /unload` unloads it now (`409` while a request is running) and `POST /load` loads it ahead of a request (both
-with `Content-Type: application/json`, e.g. `curl -X POST -H "Content-Type: application/json" localhost:8080/unload`);
+with `Content-Type: application/json`, e.g. `curl -X POST -H "Content-Type: application/json" localhost:8081/unload`);
 `/health` says `"loaded"`, `/v1/models` lists it as `unloaded` (like llama.cpp's router), `/props` sets
 `is_sleeping` and the Monitor shows the state. Unloading ends the engine process - and the image encoder, when images
 are on; it is started again first, as at a start - so their VRAM and RAM go straight back. The model files stay in
@@ -524,7 +551,7 @@ Without the key nothing is counted or written. Setup rewrites the config when ru
 
 ## Using it
 
-The server listens on `http://127.0.0.1:8080` (change with `--port` in setup, or edit the run script).
+The server listens on `http://127.0.0.1:8081` (change with `--port` in setup, or edit the run script).
 
 | API | Endpoint |
 | --- | --- |
@@ -541,13 +568,13 @@ The server listens on `http://127.0.0.1:8080` (change with `--port` in setup, or
 `/models` and `/v1/models` list only the loaded model, with its context limit and input modalities. `/props` exposes the original chat template, context limit, configured generation defaults (shared settings take precedence), model path and engine version when available. Context means the full engine context, not the resident KV window. `n_predict: -1` means no fixed output cap. Unconfigured sampling fields are omitted. `autoload` has no effect; an unknown `model` returns 404. These metadata endpoints and `/slots` require the API key when one is configured. They do not load, unload or restart models.
 
 ```bash
-curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/json" -d '{
+curl http://127.0.0.1:8081/v1/chat/completions -H "Content-Type: application/json" -d '{
   "model": "hypercore", "messages": [{"role": "user", "content": "Write a haiku about GPUs."}], "max_tokens": 512 }'
 ```
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="none")
+client = OpenAI(base_url="http://127.0.0.1:8081/v1", api_key="none")
 r = client.chat.completions.create(model="hypercore", messages=[{"role": "user", "content": "Hello!"}])
 print(r.choices[0].message.content)
 ```
@@ -597,7 +624,17 @@ print(r.choices[0].message.content)
   all is not checked. `--turn-tail-check` on the command line is the same as `"turn_tail_check": true` in
   `hypercore-<model>.json`; `"turn_tail_prompt"` replaces the question. Each check is another read of the
   conversation, so it costs prompt time: it is for agent turns that stop early, not for a chat that is already
-  finishing.
+  finishing. `/v1/status` reports it as `"turn_tail": {"enabled", "max_checks", "custom_prompt}"`, so the
+  Monitor can say whether the check is on and whether the question has been replaced.
+- **What the system prompt tells the model about its resources (prompt.json v6).** `system_prompt` has a
+  `resources` section naming the two things the model is expected to reach: the topic tree under
+  `data/history/` (built by `tools/build_history.py` from the chat transcripts; `topics/<topic>.md` for the
+  dated entries, `notes/<topic>.md` for the current state, `index.json` for the machine-readable version),
+  and the Assist tools (`assist__status`, `assist__models`, `assist__chat`) that reach an external NVIDIA
+  endpoint. The rule written into the prompt is: check history before re-deriving a fact, and use Assist only
+  when a second model adds something the local engine cannot. `GET /prompts` renders the whole thing as
+  markdown and the page sends it as the leading system turn, ahead of any agent profile; the file is re-read
+  when it changes, so editing it needs no restart.
 - **What setup writes into a new run config.** `hypercore-<model>.json` from `setup.sh`/`setup.py` carries
   `"host": "0.0.0.0"`, `"api_key": "0000"` and `"turn_tail_check": true`, and `run-<model>.sh`/`.bat` passes
   `--turn-tail-check`. `--host`, `--api-key` and `--no-turn-tail-check` change them, and a model whose config
@@ -630,7 +667,7 @@ print(r.choices[0].message.content)
   `--prefill auto` (8192 tokens), a 42,131 token prompt read in 15 s sent six of them. A prompt shorter than one chunk
   sends nothing, and that is on purpose: its only line arrives once the prompt is read, because the last tokens go
   through the verify windows rather than the batched path, so it stops up to `--short-read` tokens short of the end.
-- **Chat apps.** Any app with an "OpenAI-compatible" provider works: base URL `http://127.0.0.1:8080/v1`, any API key.
+- **Chat apps.** Any app with an "OpenAI-compatible" provider works: base URL `http://127.0.0.1:8081/v1`, any API key.
 - **OpenCode** (#543). A starting point for `opencode.jsonc` (in your project, or `~/.config/opencode/`); the field
   names are OpenCode's, so check its config docs if your version differs:
 
@@ -641,7 +678,7 @@ print(r.choices[0].message.content)
       "hypercore": {
         "npm": "@ai-sdk/openai-compatible",
         "name": "HyperCore (local)",
-        "options": { "baseURL": "http://127.0.0.1:8080/v1", "apiKey": "none" },  // or your api_key
+        "options": { "baseURL": "http://127.0.0.1:8081/v1", "apiKey": "none" },  // or your api_key
         "models": {
           "hypercore": {
             "name": "Qwen3.8-Flash-Next (HyperCore)",
@@ -665,7 +702,7 @@ print(r.choices[0].message.content)
   Keep `limit.output` well under it: a request whose prompt plus `max_tokens` runs past the context is refused (see
   **Context** below), or add `"fit_max_tokens": true` to `hypercore-<model>.json`. For a hard cap on the thinking, add
   `"reasoning_budget_tokens": N` to `hypercore-<model>.json` (see above).
-- **Claude Code** (HyperCore 0.1.17 or newer): set `ANTHROPIC_BASE_URL=http://127.0.0.1:8080` and
+- **Claude Code** (HyperCore 0.1.17 or newer): set `ANTHROPIC_BASE_URL=http://127.0.0.1:8081` and
   `ANTHROPIC_MODEL` to a Claude model name it knows (it refuses names it doesn't; HyperCore ignores the name), plus any
   `ANTHROPIC_AUTH_TOKEN` (or your `api_key`, if you set one).
 - **Codex CLI** (0.1.39): see [the Responses API](#the-responses-api-and-codex-cli) below.
@@ -688,12 +725,12 @@ print(r.choices[0].message.content)
 - **From other devices on your network.** The server listens on your PC only (`127.0.0.1`) unless you say otherwise:
   run setup with `START-HERE.bat --setup --host 0.0.0.0 --api-key some-long-secret` (or add `"host": "0.0.0.0"` and
   `"api_key": "..."` to `hypercore-<model>.json`). The server window then prints this PC's addresses
-  (`from other devices: http://192.168.x.x:8080/`); open that on the other device, or use `.../v1` as an API base URL.
+  (`from other devices: http://192.168.x.x:8081/`); open that on the other device, or use `.../v1` as an API base URL.
   On Windows the firewall blocks it until you allow it: accept its prompt for Python (private networks), or run
-  `New-NetFirewallRule -DisplayName "HyperCore 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow -Profile Private`
+  `New-NetFirewallRule -DisplayName "HyperCore 8081" -Direction Inbound -Protocol TCP -LocalPort 8081 -Action Allow -Profile Private`
   in an admin PowerShell, and make sure the network is set to Private.
 - **From the internet.** Put a tunnel in front of it, for example [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/):
-  `cloudflared tunnel --url http://127.0.0.1:8080`. **Set a key first**, or anyone with the link can use your PC:
+  `cloudflared tunnel --url http://127.0.0.1:8081`. **Set a key first**, or anyone with the link can use your PC:
   add `"api_key": "some-long-secret"` to `hypercore-<model>.json` (or set the `HYPERCORE_API_KEY` environment variable);
   clients then send it as their API key. Streamed answers carry `X-Accel-Buffering: no`, so nginx-style proxies pass
   each token on at once. The web app's settings and MCP tools only answer HyperCore's own page: when you open it through
@@ -795,9 +832,9 @@ requests of llama-server's slot API, for its single slot 0, when started with `-
 format is HyperCore's own, not llama.cpp's:
 
 ```bash
-curl -X POST "http://127.0.0.1:8080/slots/0?action=save"    -H "Content-Type: application/json" -d '{"filename": "chat1.bin"}'
+curl -X POST "http://127.0.0.1:8081/slots/0?action=save"    -H "Content-Type: application/json" -d '{"filename": "chat1.bin"}'
 # {"id_slot": 0, "filename": "chat1.bin", "n_saved": 63025, "n_written": 1198691396, "timings": {"save_ms": 709.5}}
-curl -X POST "http://127.0.0.1:8080/slots/0?action=restore" -H "Content-Type: application/json" -d '{"filename": "chat1.bin"}'
+curl -X POST "http://127.0.0.1:8081/slots/0?action=restore" -H "Content-Type: application/json" -d '{"filename": "chat1.bin"}'
 # {"id_slot": 0, "filename": "chat1.bin", "n_restored": 63025, "n_read": 1198691396, "timings": {"restore_ms": 898.2}}
 ```
 
@@ -966,7 +1003,7 @@ show_raw_agent_reasoning = true         # show the model's thinking (it writes n
 
 [model_providers.hypercore]
 name = "HyperCore (local)"
-base_url = "http://127.0.0.1:8080/v1"
+base_url = "http://127.0.0.1:8081/v1"
 wire_api = "responses"
 stream_idle_timeout_ms = 600000         # a first, long prompt can take minutes to read
 # env_key = "HYPERCORE_API_KEY"            # only if the server has an api_key: the variable holding it
@@ -1138,7 +1175,7 @@ you> What is the total on this receipt?
 ```python
 import base64
 from openai import OpenAI
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="none")
+client = OpenAI(base_url="http://127.0.0.1:8081/v1", api_key="none")
 img = base64.b64encode(open("photo.jpg", "rb").read()).decode()
 r = client.chat.completions.create(model="hypercore", messages=[{"role": "user", "content": [
     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}},
@@ -1227,7 +1264,7 @@ the document, +0.4% on the chat. Details: `bench/results/2026-09-27-esp/`.
 | --- | --- |
 | `the NVIDIA driver is too old` | Update the driver (NVIDIA App or nvidia.com/drivers), restart, run `START-HERE.bat` again. |
 | Python or the build tools could not be installed | Install what it names (links are printed), then run it again. Everything already done is kept. |
-| `port 8080 is already in use` | HyperCore is already running (look for its window), or another program uses the port: `START-HERE.bat --port 8081`. |
+| `port 8081 is already in use` | HyperCore is already running (look for its window), or another program uses the port: `START-HERE.bat --port 8081`. |
 | `cudaHostRegister ... out of memory` in the log | Normal on Windows: the engine pins the experts in per-layer slices instead. Only a problem if the load then fails. |
 | `ExpertCache: cudaMalloc(...) failed: out of memory` although VRAM is free | Windows' page file is off or tiny: every allocation on the graphics card is also charged to Windows' commit (RAM + page file). Set the page file to "System managed" (System > About > Advanced system settings > Performance > Advanced > Virtual memory) and restart. Since 0.1.19 the engine retries with a smaller cache instead of stopping, and setup warns about a page file under 4 GB (issue #60). |
 | The first start takes minutes | It is reading 34-55 GB into RAM; the second start is faster while the files are in the OS cache. |

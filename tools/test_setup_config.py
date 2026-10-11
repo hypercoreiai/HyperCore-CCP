@@ -113,7 +113,8 @@ class CarryOver(unittest.TestCase):
             p.write_text("{cut off", encoding="utf-8")
             quiet(setup.write_setup_config, p, {"exe": "e", "args": []})
             self.assertEqual(json.loads(p.read_text(encoding="utf-8")),
-                            {"exe": "e", "args": [], "host": "0.0.0.0", "api_key": "0000", "turn_tail_check": True})
+                            {"exe": "e", "args": [], "host": "0.0.0.0", "api_key": "0000", "port": 8081,
+                             "turn_tail_check": True})
             self.assertEqual((Path(d) / "hypercore-x.json.bak").read_text(encoding="utf-8"), "{cut off")
 
     def test_display_tip_and_typed_ahead_flush(self):
@@ -164,7 +165,7 @@ class CarryOver(unittest.TestCase):
             quiet(setup.write_setup_config, p, {"exe": "new"}, src)
             self.assertEqual(json.loads(p.read_text(encoding="utf-8")),
                             {"exe": "new", "mcp_servers": {"a": {"command": "x"}},
-                             "host": "0.0.0.0", "api_key": "0000", "turn_tail_check": True})
+                             "host": "0.0.0.0", "api_key": "0000", "port": 8081, "turn_tail_check": True})
             self.assertFalse((Path(d) / "hypercore-x.json.bak").exists())   # nothing here was replaced
 
 
@@ -231,8 +232,8 @@ class NoBrowser(unittest.TestCase):
 
 
 class ServerDefaults(unittest.TestCase):
-    """Every run config setup writes has a host, an API key and the end-of-turn check: a new install answers to the
-    other devices on the network under the key 0000, and a turn that would end is asked whether its work is done.
+    """Every run config setup writes has a host, an API key, a port and the end-of-turn check: a new install answers to the
+    other devices on the network under the key 0000 on port 8081, and a turn that would end is asked whether its work is done.
     What was asked on this run, or set for this model before, wins over the default."""
 
     def setUp(self):
@@ -247,9 +248,22 @@ class ServerDefaults(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(cfg["host"], "0.0.0.0")
         self.assertEqual(cfg["api_key"], "0000")
+        self.assertEqual(cfg["port"], 8081)
         self.assertIs(cfg["turn_tail_check"], True)
         self.assertIn("the API key is 0000", out)
         self.assertIn("Turn check:", out)
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(setup, "ROOT", Path(d)):
+            script = setup.write_run_script("Q2_0", Path(d) / "hypercore-q2_0.json", cfg["port"])
+            self.assertIn('"--port" "8081"', script.read_text(encoding="utf-8"))
+            self.assertIn("--turn-tail-check", script.read_text(encoding="utf-8"))
+
+    def test_the_port_can_be_asked_for(self):
+        code, out, cfg, _ = self.run_setup("--port", "9000")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(cfg["port"], 9000)
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(setup, "ROOT", Path(d)):
+            script = setup.write_run_script("Q2_0", Path(d) / "hypercore-q2_0.json", cfg["port"])
+            self.assertIn('"--port" "9000"', script.read_text(encoding="utf-8"))
 
     def test_what_was_asked_wins(self):
         code, out, cfg, _ = self.run_setup("--host", "127.0.0.1", "--api-key", "s3cret", "--no-turn-tail-check")
@@ -295,6 +309,22 @@ class ServerDefaults(unittest.TestCase):
             again = json.loads(p.read_text(encoding="utf-8"))
             self.assertEqual(again["api_key"], "my-key")
             self.assertIs(again["turn_tail_check"], False)
+
+
+    def test_the_defaults_can_be_given_from_the_shell(self):
+        """setup.sh exports HYPERCORE_DEFAULT_*; an install can change the defaults without editing setup.py."""
+        with unittest.mock.patch.object(setup, "DEFAULT_HOST", "192.168.1.9"), \
+                unittest.mock.patch.object(setup, "DEFAULT_API_KEY", "housekey"), \
+                unittest.mock.patch.object(setup, "DEFAULT_TURN_TAIL_CHECK", False):
+            cfg = {}
+            setup.apply_server_defaults(cfg, None)
+            self.assertEqual((cfg["host"], cfg["api_key"], cfg["turn_tail_check"]),
+                            ("192.168.1.9", "housekey", False))
+        # the shell file itself carries the three exports
+        text = (ROOT / "setup.sh").read_text(encoding="utf-8")
+        for name in ("HYPERCORE_DEFAULT_HOST", "HYPERCORE_DEFAULT_API_KEY",
+                     "HYPERCORE_DEFAULT_TURN_TAIL_CHECK"):
+            self.assertIn(name, text, name)
 
 
 class VisionTokens(unittest.TestCase):

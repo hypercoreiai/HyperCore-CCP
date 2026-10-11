@@ -842,6 +842,12 @@ function answerHtml(m) {
 }
 // a tool event from the stream (the `hypercore_mcp` field of a chunk)
 function onTool(m, x) {
+  if (x.event === "tail_check") {                    // the end-of-turn "is the work done?" check (turn_tail_check)
+    m.tailChecks = (m.tailChecks || 0) + 1;          // not a tool call: no row, just the hint
+    beat = x.result === "continue" ? {check: true, since: Date.now()} : null;
+    paintBeat();
+    return;
+  }
   if (x.event === "limit") { m.limit = x.max_rounds; beat = null; paintBeat(); return; }
   if (x.event === "condensed") {                    // the condenser shortened earlier results (mcp.yaml)
     m.condensed = (m.condensed || 0) + (x.chars || 0);
@@ -1130,6 +1136,7 @@ let beat = null;                                   // {name, since, round} while
 function beatText() {
   if (!beat) return busy ? "Thinking\u2026" : "Shift+Enter: new line";
   if (beat.compact) return "Compacting earlier context\u2026";
+  if (beat.check) return "Checking the work against the request\u2026";
   return `Running ${beat.name} \u00b7 round ${beat.round} \u00b7 ${fmt((Date.now() - beat.since) / 1000, 1)} s`;
 }
 function paintBeat() { const h = $("composer-hint"); if (h) h.textContent = beatText(); }
@@ -1152,10 +1159,12 @@ async function send() {
   busy = {controller, msg: m};
   setBusy(true);
 
-  // an agent profile is a system turn in front of the conversation, exactly as the chat template reads it
+  // prompt.json's system prompt opens every chat, and the agent profile follows it; both are system
+  // turns, which the chat template merges into one. pruneToContext keeps leading system turns whole.
   const agent = (promptCatalog.agents || []).find((a) => a.key === $("agent-select").value);
   const payload = apiMessages();
   if (agent && agent.prompt) payload.unshift({role: "system", content: agent.prompt});
+  if (promptCatalog.system) payload.unshift({role: "system", content: promptCatalog.system});
   const kept = pruneToContext(payload, settings.ctx);
   if (kept.summary) m.compaction = kept.summary;
   if (kept.dropped) toast("info", "Context compacted",

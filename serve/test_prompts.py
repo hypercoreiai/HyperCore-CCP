@@ -156,6 +156,26 @@ class Catalog(unittest.TestCase):
             self.assertTrue(a["name"] and a["prompt"])
         self.assertFalse(any(a["key"].startswith("_") for a in c["agents"]))
 
+    def test_the_system_prompt_names_the_history_and_assist_resources(self):
+        """The shipped system prompt tells the model about the two resources it can reach:
+        the topic tree under data/history/ and the Assist tools."""
+        system = catalog(find_prompt_file(ROOT))["system"]
+        for section in ("data/history/", "assist__chat"):
+            self.assertIn(section, system)
+        for topic in ("topics/", "notes/", "index.json"):
+            self.assertIn(topic, system)
+        self.assertIn("assist__models", system)
+
+    def test_the_page_sends_the_system_prompt_before_the_profile(self):
+        """prompt.json's system prompt opens every chat, with the agent profile after it."""
+        js = (ROOT / "serve" / "web" / "app.js").read_text(encoding="utf-8")
+        agent = 'if (agent && agent.prompt) payload.unshift({role: "system", content: agent.prompt});'
+        system = 'if (promptCatalog.system) payload.unshift({role: "system", content: promptCatalog.system});'
+        self.assertIn(agent, js)
+        self.assertIn(system, js)
+        # unshifted later means it sits in front of the profile in the payload
+        self.assertGreater(js.index(system), js.index(agent))
+
     def test_the_page_ships_an_empty_dropdown(self):
         """The menu's entries come from /prompts at run time, not from the page."""
         html = (ROOT / "serve" / "web" / "index.html").read_text(encoding="utf-8")

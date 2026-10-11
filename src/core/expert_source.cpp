@@ -1459,6 +1459,102 @@ void RouterLookahead::submit(int64_t layer, const float* x, int64_t n_tok, const
     cv_.notify_one();
 }
 
+void RouterLookahead::enable_stats(int64_t n_layers) {
+    if (n_layers < 1 || n_expert_ < 1) return;
+    words_ = (n_expert_ + 63) / 64;
+    pmask_.reset(new std::atomic<uint64_t>[(size_t) (n_layers * 3 * words_)]);
+    pstamp_.reset(new std::atomic<uint64_t>[(size_t) n_layers]);
+    for (int64_t i = 0; i < n_layers * 3 * words_; ++i) pmask_[(size_t) i].store(0, std::memory_order_relaxed);
+    for (int64_t i = 0; i < n_layers; ++i) pstamp_[(size_t) i].store(0, std::memory_order_relaxed);
+    pvote_.reset(new std::atomic<int32_t>[(size_t) (n_layers * kVoteN)]);
+    for (int64_t i = 0; i < n_layers * kVoteN; ++i) pvote_[(size_t) i].store(0, std::memory_order_relaxed);
+    stats_on_ = true;
+}
+
+// the dispatch thread: score the prediction made for `layer` against the experts it routes outside the GPU cache
+void RouterLookahead::stats_score(int64_t layer, const int32_t* ids, int64_t n, const int32_t* host_res, int pcie_num) {
+    if (!stats_on_ || layer < 1 || layer >= (int64_t) routers_.size()) return;
+    ++st_layers_;
+    if (pstamp_[(size_t) layer].load(std::memory_order_acquire) != sub_gen_ + 1) {   // no prediction this window
+        ++st_nopred_;
+        return;
+    }
+    std::vector<uint64_t> act((size_t) words_, 0);
+    for (int64_t i = 0; i < n; ++i) {
+        const int32_t e = ids[i];
+        if (e < 0 || e >= n_expert_) continue;
+        if (host_res != nullptr && host_res[(size_t) (layer * n_expert_ + e)] >= 0) continue;
+        act[(size_t) (e >> 6)] |= 1ull << (e & 63);
+    }
+    uint64_t na = 0;
+    for (int64_t w = 0; w < words_; ++w) na += (uint64_t) __builtin_popcountll(act[(size_t) w]);
+    st_actual_ += na;
+    {   // the vote-ranked top M (the experts most tokens predict) against the misses, and against the PCIe share
+        static const int vm[3] = {4, 8, 12};
+        int32_t vt[kVoteN];
+        int nv = 0;
+        for (int i = 0; i < kVoteN; ++i) {
+            const int32_t v = pvote_[(size_t) (layer * kVoteN + i)].load(std::memory_order_relaxed);
+            if (v == 0) break;
+            vt[nv++] = v - 1;
+        }
+        // the misses in routing order (first appearance); the PCIe share is the last (n_miss * pcie_num / 256) of them
+        std::vector<int32_t> order_miss;
+        for (int64_t i = 0; i < n; ++i) {
+            const int32_t e = ids[i];
+            if (e < 0 || e >= n_expert_) continue;
+            if (host_res != nullptr && host_res[(size_t) (layer * n_expert_ + e)] >= 0) continue;
+            if (std::find(order_miss.begin(), order_miss.end(), e) == order_miss.end()) order_miss.push_back(e);
+        }
+        const int m = ((int) order_miss.size() * pcie_num) >> 8;
+        st_pch_ += (uint64_t) m;
+        for (int s = 0; s < 3; ++s) {
+            const int top = std::min(vm[s], nv);
+            st_vpred_[s] += (uint64_t) top;
+            for (int j = 0; j < top; ++j) {
+                if ((act[(size_t) (vt[j] >> 6)] >> (vt[j] & 63)) & 1ull) ++st_vhit_[s];
+                const auto it = std::find(order_miss.begin(), order_miss.end(), vt[j]);
+                if (it != order_miss.end() && (int) (it - order_miss.begin()) >= (int) order_miss.size() - m) ++st_pcov_[s];
+            }
+        }
+    }
+    for (int s = 0; s < 3; ++s) {
+        uint64_t hit = 0, np = 0;
+        for (int64_t w = 0; w < words_; ++w) {
+            const uint64_t pm = pmask_[(size_t) ((layer * 3 + s) * words_ + w)].load(std::memory_order_relaxed);
+            hit += (uint64_t) __builtin_popcountll(pm & act[(size_t) w]);
+            np += (uint64_t) __builtin_popcountll(pm);
+        }
+        st_hit_[s] += hit;
+        st_pred_[s] += np;
+    }
+    if (layer == (int64_t) routers_.size() - 1 && (++st_windows_ % 100) == 0) {
+        const uint64_t scored = st_layers_ - st_nopred_;
+        std::fprintf(stderr, "hypercore lookahead stats: %llu windows, %llu layers scored, %llu without a prediction (%.1f%%); "
+                     "%.2f actual non-resident experts/layer;",
+                     (unsigned long long) st_windows_, (unsigned long long) scored, (unsigned long long) st_nopred_,
+                     st_layers_ ? 100.0 * (double) st_nopred_ / (double) st_layers_ : 0.0,
+                     scored ? (double) st_actual_ / (double) scored : 0.0);
+        std::fprintf(stderr, " predictor thread %.2f ms/window;",
+                     (double) busy_us_.load(std::memory_order_relaxed) / 1000.0 / (double) st_windows_);
+        static const int add[3] = {0, 4, 10};
+        for (int s = 0; s < 3; ++s)
+            std::fprintf(stderr, " k=%d: recall %.3f precision %.3f (%.2f predicted/layer);", k_ + add[s],
+                         st_actual_ ? (double) st_hit_[s] / (double) st_actual_ : 0.0,
+                         st_pred_[s] ? (double) st_hit_[s] / (double) st_pred_[s] : 0.0,
+                         scored ? (double) st_pred_[s] / (double) scored : 0.0);
+        static const int vm[3] = {4, 8, 12};
+        for (int s = 0; s < 3; ++s)
+            std::fprintf(stderr, " votes top%d: %.2f/layer, covers %.3f of the misses (precision %.3f), %.3f of the PCIe share (%.2f/layer);",
+                         vm[s], scored ? (double) st_vpred_[s] / (double) scored : 0.0,
+                         st_actual_ ? (double) st_vhit_[s] / (double) st_actual_ : 0.0,
+                         st_vpred_[s] ? (double) st_vhit_[s] / (double) st_vpred_[s] : 0.0,
+                         st_pch_ ? (double) st_pcov_[s] / (double) st_pch_ : 0.0,
+                         scored ? (double) st_pch_ / (double) scored : 0.0);
+        std::fprintf(stderr, "\n");
+    }
+}
+
 void RouterLookahead::run() {
     std::vector<float> logits((size_t) (8 * n_expert_));
     std::vector<int32_t> order((size_t) n_expert_);
@@ -1507,16 +1603,49 @@ void RouterLookahead::run() {
                 }
             }
         }
+        const int kmax = stats_on_ ? (int) std::min<int64_t>(k_ + 10, n_expert_) : k_;
+        const int ks[3] = {k_, (int) std::min<int64_t>(k_ + 4, n_expert_), kmax};
+        std::vector<uint64_t> sm;
+        if (stats_on_) sm.assign((size_t) (3 * words_), 0);
         for (int64_t t = 0; t < nt; ++t) {
             const float* lt = logits.data() + (size_t) (t * n_expert_);
             for (int64_t e = 0; e < n_expert_; ++e) order[(size_t) e] = (int32_t) e;
-            std::partial_sort(order.begin(), order.begin() + k_, order.end(),
+            std::partial_sort(order.begin(), order.begin() + kmax, order.end(),
                               [&](int32_t a, int32_t b) { return lt[(size_t) a] > lt[(size_t) b]; });
-            for (int j = 0; j < k_; ++j) {
+            for (int j = 0; j < kmax; ++j) {
                 const int64_t e = order[(size_t) j];
                 if (host_res != nullptr && host_res[(size_t) (layer * n_expert_ + e)] >= 0) continue;   // on the GPU
-                if (std::find(want.begin(), want.end(), e) == want.end()) want.push_back(e);
+                if (j < k_ && std::find(want.begin(), want.end(), e) == want.end()) want.push_back(e);
+                if (stats_on_)
+                    for (int s = 0; s < 3; ++s)
+                        if (j < ks[s]) sm[(size_t) (s * words_ + (e >> 6))] |= 1ull << (e & 63);
             }
+        }
+        if (stats_on_) {
+            // votes: how many tokens put each non-resident expert in their top k_
+            std::vector<std::pair<int, int32_t>> votes;   // (sum of 64 - rank, expert)
+            for (int64_t t = 0; t < nt; ++t) {
+                const float* lt = logits.data() + (size_t) (t * n_expert_);
+                for (int64_t e = 0; e < n_expert_; ++e) order[(size_t) e] = (int32_t) e;
+                std::partial_sort(order.begin(), order.begin() + k_, order.end(),
+                                  [&](int32_t a, int32_t b) { return lt[(size_t) a] > lt[(size_t) b]; });
+                for (int j = 0; j < k_; ++j) {
+                    const int32_t e = order[(size_t) j];
+                    if (host_res != nullptr && host_res[(size_t) (layer * n_expert_ + e)] >= 0) continue;
+                    auto it = std::find_if(votes.begin(), votes.end(),
+                                          [&](const std::pair<int, int32_t>& v) { return v.second == e; });
+                    if (it == votes.end()) votes.emplace_back(64 - j, e);
+                    else it->first += 64 - j;
+                }
+            }
+            std::sort(votes.begin(), votes.end(),
+                      [](const std::pair<int, int32_t>& a, const std::pair<int, int32_t>& b) { return a.first > b.first; });
+            for (int i = 0; i < kVoteN; ++i)
+                pvote_[(size_t) (layer * kVoteN + i)].store(i < (int) votes.size() ? votes[(size_t) i].second + 1 : 0,
+                                                            std::memory_order_relaxed);
+            for (int64_t i = 0; i < 3 * words_; ++i)
+                pmask_[(size_t) (layer * 3 * words_ + i)].store(sm[(size_t) i], std::memory_order_relaxed);
+            pstamp_[(size_t) layer].store(sub_gen_ + 1, std::memory_order_release);
         }
         src_->warm(layer, want.data(), (int64_t) want.size());
         predicted_.fetch_add((int64_t) want.size(), std::memory_order_relaxed);
@@ -2406,7 +2535,16 @@ namespace {
 // refused at run time rather than written past them.
 constexpr int64_t kMaxWindowEntries = 128;
 static_assert(hypercore::kernels::cpu::MAXT * 10 <= kMaxWindowEntries, "a verify window's entries overflow the tables");
+
+// HYPERCORE_ROUTE_TAIL_SKIP (the Strata 0.1.42 tail skip): the rank from which a missed expert that every token
+// of the window routes only at or above is skipped.  A missed expert is the last one in routing order for its
+// token, so a token whose whole tail of experts is outside the VRAM tier has nothing left to fetch: the row is
+// left zero and the blob is not read.  Off unless set; the CUDA serve start-up sets 7.
+static int g_tail_skip_rank = 0;
 }  // namespace
+
+int tail_skip_rank() { return g_tail_skip_rank; }
+void set_tail_skip_rank(int r) { g_tail_skip_rank = r < 0 ? 0 : r; }
 
 void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32_t* ids, int64_t n_tok, int64_t k,
                                 float* out) {
@@ -2418,7 +2556,13 @@ void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32
         d.fail_layer = d.layers;
         return;
     }
-    if (d.lookahead != nullptr) d.lookahead->submit(d.layers, x_f, n_tok, d.host_res);   // CS-T: warm layer + 1
+    if (d.lookahead != nullptr) {
+        if (d.lookahead->stats_on()) {                       // HYPERCORE_LOOKAHEAD_STATS: measurement only
+            if (d.layers == 0) d.lookahead->stats_window_start();
+            d.lookahead->stats_score(d.layers, ids, n_tok * k, d.host_res, d.pcie_num);
+        }
+        d.lookahead->submit(d.layers, x_f, n_tok, d.host_res);   // CS-T: warm layer + 1
+    }
     if (k < 1 || n_tok * k > kMaxWindowEntries) {
         d.failed = true;
         d.fail = "a verify window routes more entries than the expert pool's window tables hold";
@@ -2458,6 +2602,34 @@ void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32
                 if (d.remote[r]->holds(d.layers, e)) return true;
             return false;
         };
+        // HYPERCORE_ROUTE_TAIL_SKIP: a token whose whole tail of experts is outside every tier has nothing to
+        // fetch.  The skip is per token, so it is decided before the distinct-expert walk.
+        const int skip_rank = g_tail_skip_rank;
+        bool skip_d[kMaxWindowEntries] = {};
+        if (skip_rank > 0 && n_tok > 1) {
+            for (int64_t li = 0; li < n_tok; ++li) {
+                int cnt = 0;
+                for (int64_t j = 0; j < k; ++j) {
+                    int e = ids[li * k + j];
+                    if (e < 0 || e >= d.n_expert) continue;
+                    if (d.host_res && d.host_res[(size_t) d.layers * (size_t) d.n_expert + (size_t) e] >= 0) continue;
+                    if (d.peer != nullptr && d.peer->has(d.layers, e)) continue;
+                    if (helper_holds(e)) continue;
+                    ++cnt;
+                }
+                if (cnt >= skip_rank) {
+                    for (int64_t j = 0; j < k; ++j) {
+                        int64_t i = li * k + j;
+                        int e = ids[i];
+                        if (e < 0 || e >= d.n_expert) continue;
+                        if (d.host_res && d.host_res[(size_t) d.layers * (size_t) d.n_expert + (size_t) e] >= 0) continue;
+                        if (d.peer != nullptr && d.peer->has(d.layers, e)) continue;
+                        if (helper_holds(e)) continue;
+                        skip_d[i] = true;
+                    }
+                }
+            }
+        }
         for (int64_t i = 0; i < n; ++i) {
             first_of[i] = i;
             for (int64_t j = 0; j < i; ++j)
@@ -2480,6 +2652,13 @@ void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32
             const int32_t e = ids[i0];
             int kd = -1;
             unsigned long long ptr = 0;
+            if (skip_d[q]) {                       // HYPERCORE_ROUTE_TAIL_SKIP: neither copied nor computed
+                for (int64_t i = i0; i < n; ++i)
+                    if (first_of[i] == i0) kind[i] = -2;
+                ++d.tail_skipped;
+                ++d.tail_experts;
+                continue;
+            }
             if (e >= 0 && e < d.n_expert) {
                 const int32_t slot = d.host_res[(size_t) d.layers * (size_t) d.n_expert + (size_t) e];
                 if (slot >= 0) {
@@ -2574,7 +2753,7 @@ void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32
     const bool gpu_zeroes_hits = (d.plan != nullptr && n <= kMaxWindowEntries && n <= d.plan->cap && dec_batch && !device_plan);
     bool any_cpu = false;
     for (int64_t i = 0; i < n; ++i)
-        if (kind[i] < 0) { any_cpu = true; break; }
+        if (kind[i] == -1) { any_cpu = true; break; }   // -2: skipped (HYPERCORE_ROUTE_TAIL_SKIP), no work
     const auto c1 = std::chrono::steady_clock::now();
     if (any_cpu) {
         // #578 --remote-expert-opt: a token whose experts all run on a GPU (CUDA0 or a helper) needs no CPU activation
@@ -2594,7 +2773,7 @@ void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32
         static thread_local std::vector<int64_t> miss;
         miss.clear();
         for (int64_t i = 0; i < n_tok * k; ++i)
-            if (kind[i] < 0 && ids[i] >= 0 && ids[i] < d.n_expert &&
+            if (kind[i] == -1 && ids[i] >= 0 && ids[i] < d.n_expert &&
                 std::find(miss.begin(), miss.end(), (int64_t) ids[i]) == miss.end())
                 miss.push_back(ids[i]);
         d.src->prefetch(d.layers, miss.data(), (int64_t) miss.size());
@@ -2611,6 +2790,11 @@ void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32
                 d.fail_layer = d.layers;
                 d.fail_expert = e;
                 return;
+            }
+            if (kind[i] == -2) {            // HYPERCORE_ROUTE_TAIL_SKIP: a skipped tail expert contributes zero
+                std::memset(row, 0, (size_t) H * sizeof(float));
+                ++d.tail_skipped;
+                continue;
             }
             if (kind[i] >= 0) {             // CUDA0, PCIe, or a remote/peer result staged into this row below
                 if (kind[i] == 0) ++d.cache_hits;

@@ -66,17 +66,17 @@ needs about 49.8 GiB of available system RAM, plus draft/runtime buffers and oth
   "model_name": "orcarouter-qwen3.8-flash-next-uncensored-iq3_xxs",
   "log": "hypercore-orca-iq3_xxs.log",
   "host": "127.0.0.1",
-  "port": 8080
+  "port": 8081
 }
 ```
 
 Run from the repository root:
 
 ```sh
-.venv/bin/python -m serve.server --engine hypercore --config hypercore-orca-iq3_xxs.json --port 8080
+.venv/bin/python -m serve.server --engine hypercore --config hypercore-orca-iq3_xxs.json --port 8081
 ```
 
-The web interface is at `http://127.0.0.1:8080`; API clients use `http://127.0.0.1:8080/v1`.
+The web interface is at `http://127.0.0.1:8081`; API clients use `http://127.0.0.1:8081/v1`.
 Vision is not configured in this text-only example. Performance of the original GSQ-RCO model
 does not establish this fine-tune's speed or accuracy.
 

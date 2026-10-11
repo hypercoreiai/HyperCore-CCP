@@ -98,7 +98,7 @@ from the repository root:
 
 ```bash
 python tools/needle_bench.py --help
-python tools/needle_bench.py --url http://127.0.0.1:8080 --lengths 32k,128k --depths 10,50,90 --out needles.json
+python tools/needle_bench.py --url http://127.0.0.1:8081 --lengths 32k,128k --depths 10,50,90 --out needles.json
 ```
 
 Choose lengths your configured context can hold. The script supports `--api-key`

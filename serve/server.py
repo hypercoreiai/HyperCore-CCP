@@ -1,7 +1,7 @@
 """serve/server.py - plan v0.3 P8: OpenAI and Anthropic endpoints over any engine that maps token ids to tokens.
 
     python -m serve.server --engine mock --port 8095            (a scripted engine, for clients and tests)
-    python -m serve.server --engine hypercore --config hypercore.json --port 8080   (the real engine, resident)
+    python -m serve.server --engine hypercore --config hypercore.json --port 8081   (the real engine, resident)
 
 Endpoints: POST /v1/chat/completions (OpenAI, stream and non-stream), POST /v1/messages (Anthropic, stream and
 non-stream), GET /v1/models, GET /models, GET /props, GET /slots, GET /health, GET /mcp. One sequence at a time behind a FIFO (plan: one resident sequence).
@@ -89,6 +89,7 @@ from serve.hypercore_supervisor import (
     WorkerBusy,
     WorkerRejected,
     WorkerUnreachable,
+    model_startup_s,
 )
 from serve.ipc_parser import (
     STREAM_TERMINAL,
@@ -2090,6 +2091,10 @@ class Service:
             "concurrency": {"serving": max(1, int(getattr(self.engine, "batch", 0) or 0)),
                             "requested": max(1, int(getattr(self.engine, "batch", 0) or 0))},
             "dialects": ["/v1/chat/completions", "/v1/messages", "/v1/responses"],
+            # the end-of-turn "is the work done?" check: on, and how many times one turn may be asked
+            "turn_tail": {"enabled": bool(self.turn_tail_check), "max_checks": int(self.turn_tail_checks),
+                          "custom_prompt": bool(self.turn_tail_prompt != TAIL_CHECK_PROMPT)},
+
             "vision": {"enabled": images, "available": images, "error": None},
             "activity": {"requests": totals["requests"] + int(busy), "in_flight": int(busy) + int(s.get("queued") or 0),
                          "last_request_at": int(last_at) if last_at else None},
@@ -4946,8 +4951,7 @@ def main() -> int:
         # weights - the pack, the expert arena, the VRAM tier - takes the "minute or two" the
         # run script warns about, and the default 30s would kill a healthy load. The config
         # can set it; otherwise a model config gets a minute and a half.
-        startup_s = float(cfg.get("startup_timeout_s") or cfg.get("model_startup_s") or
-                          (180.0 if cfg.get("exe") else 30.0))
+        startup_s = model_startup_s(cfg)
         supervisor = HyperCoreProcessSupervisor(
             worker_binary=worker_binary,
             socket_path=socket_path,
@@ -4955,6 +4959,7 @@ def main() -> int:
             stderr_log=cfg.get("log"),
             startup_timeout_s=startup_s,
             silence_s=silence,                    # #481: the stream's own wall, not the handshake's
+            env=cfg.get("env") or {},            # #1733: the engine settings the calibration wrote for this PC
         )
         engine = HyperCoreRequestHandler(supervisor)
         if not lazy and not engine.restart():

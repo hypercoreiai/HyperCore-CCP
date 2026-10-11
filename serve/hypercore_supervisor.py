@@ -81,6 +81,27 @@ class StreamStalled(WorkerUnreachable):
 ARGV_SAFE_CONFIG_BYTES = 128 * 1024 - 1   # Linux MAX_ARG_STRLEN: one argv entry cannot be larger
 
 
+# ---------------------------------------------------------------------- how long a worker may take to start
+
+
+def model_startup_s(cfg: dict) -> float:
+    """Seconds a worker is allowed to take before it answers the READY handshake.
+
+    A worker with no model binds its socket in milliseconds. One that has to load weights -
+    the pack, the expert arena, the VRAM tier - takes the "minute or two" the run script
+    warns about, so the 30 s default would kill a healthy load. The config can set it; a
+    config with an engine gets a minute and a half. The server and the calibrator both use
+    this, so a tuning run is not stopped by a timeout the server would not use.
+    """
+    v = cfg.get("startup_timeout_s") or cfg.get("model_startup_s")
+    if v is not None:
+        try:
+            return max(1.0, float(v))
+        except (TypeError, ValueError):
+            raise ValueError(f'"startup_timeout_s" must be a number of seconds, not {v!r}')
+    return 180.0 if cfg.get("exe") else 30.0
+
+
 # ---------------------------------------------------------------------- socket hygiene
 # A Unix socket name outlives the process that bound it: the file stays in /tmp after the
 # worker exits, and the next bind on that name fails with EADDRINUSE. Two supervisors that
@@ -134,6 +155,7 @@ class HyperCoreProcessSupervisor:
         backoff_s: tuple[float, ...] = (0.5, 1.0, 2.0),
         startup_timeout_s: float = 30.0,
         silence_s: float = 0.0,
+        env: dict | None = None,
         logger: logging.Logger | None = None,
         transport: Callable[[], socket.socket] | None = None,
     ) -> None:
@@ -160,6 +182,10 @@ class HyperCoreProcessSupervisor:
         # is NOT the startup timeout - a 116k-token prefill is ~31 s on this machine, and a wall
         # borrowed from the 30 s handshake kills a healthy request mid-prefill.
         self.silence_s = float(silence_s)
+        # #1733: the model config's own engine settings (HYPERCORE_ROUTE_TAIL_SKIP, the hipBLASLt
+        # tuning table, the resident-pin arm). Calibration writes them into the config; without this
+        # the worker would inherit only the shell the server was started from.
+        self.env = {str(k): str(v) for k, v in (env or {}).items() if v is not None}
         self.log = logger or logging.getLogger("hypercore.supervisor")
 
         self._proc: subprocess.Popen | None = None
@@ -240,7 +266,16 @@ class HyperCoreProcessSupervisor:
         """Alias for start_worker(); kept so existing callers do not break."""
         return self.start_worker()
 
-    def start(self, timeout_s: float = 30.0) -> None:
+    def child_environment(self) -> dict:
+        """The environment the worker process gets: this server's, with the config's engine settings on top."""
+        return {**os.environ, **self.env}
+
+    def start(self, timeout_s: float | None = None) -> None:
+        # The allowance is the supervisor's own (model_startup_s for a config with an engine),
+        # not a 30 s constant: a caller that just says start() means "start this worker", and
+        # a worker that has to load weights needs minutes. tools/calibrate.py calls this
+        # directly, which is why the tuning run stopped at "within 30.0s".
+        timeout_s = self.startup_timeout_s if timeout_s is None else float(timeout_s)
         if self._listener is not None and self.alive():
             return
 
@@ -264,6 +299,7 @@ class HyperCoreProcessSupervisor:
                 [self.worker_binary, self.socket_path, self._config_argument()],
                 stdout=subprocess.DEVNULL,
                 stderr=stderr_target,
+                env=self.child_environment() if self.env else None,
             )
             self._stderr_handle = stderr_target if self.stderr_log else None
 

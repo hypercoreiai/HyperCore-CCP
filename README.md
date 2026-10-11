@@ -6,7 +6,7 @@
 
 HyperCore runs a 30 B-class MoE model on a single 12–24 GB consumer GPU by keeping the
 hot path on the card and the cold path in system RAM, and serving it as an OpenAI- and
-Anthropic-compatible API on `http://127.0.0.1:8080`.
+Anthropic-compatible API on `http://127.0.0.1:8081`.
 
 Engine version **0.1.40** · CUDA, HIP (AMD), SYCL (Intel Arc) and CPU backends · MIT licensed.
 
@@ -55,7 +55,11 @@ CDN — `serve/web/` is one page, its styles, an inline SVG sprite and the Outfi
   come from `prompt.json` beside the server or `prompts/prompt.json` (the one this repo
   ships): adding a profile to that file adds a menu entry with nothing to change in the
   page or the code. `{{current_date}}`, `{{current_year}}` and `{{current_month}}` are
-  filled from the server clock, so a profile never hard-codes a year that goes stale.
+  filled from the server clock, so a profile never hard-codes a year that goes stale. The `system_prompt`
+  in that file also names the two resources the model is told to use: the accumulated development history
+  under `data/history/` (built by `tools/build_history.py` from the chat transcripts, one file per topic)
+  and the Assist tools that reach an external model. `GET /prompts` returns it as markdown, and the page
+  sends it as the first system turn of every chat.
 - **Monitor** — context fill, experts in VRAM, system RAM, GPU temperature, the recent
   requests (prompt, reused, output, tok/s, VRAM hit rate, duration), the conversation
   cache, the MCP switches and the external-assistant log.

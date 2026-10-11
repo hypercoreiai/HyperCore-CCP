@@ -201,7 +201,7 @@ python3 tools/batch_interleave_test.py --exe engine/hypercore --config hypercore
     --extra "--pcie-frac 0 --adapt-every 1000000 --no-prefill-borrow"
 python3 tools/parking_test.py --exe engine/hypercore --config hypercore-<model>.json \
     --extra "--layer-split 12,24,36 --conversation-cache-mib 8192 --conversation-cache-slots 4 --pcie-frac 0"
-HYPERCORE_KEY=<key> python3 tools/early_close_test.py http://127.0.0.1:8080
+HYPERCORE_KEY=<key> python3 tools/early_close_test.py http://127.0.0.1:8081
 ```
 
 ## Engine protocol (`--serve`)

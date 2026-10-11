@@ -131,3 +131,8 @@ htmlcov/
 
 # Checkpoint helper: local tooling, not project source.
 /cp_blackbox.sh
+
+# The chat history index is built locally by tools/build_history.py from the
+# transcripts under data/history/chats; it carries live API keys, so it is not
+# committed.
+data/history/

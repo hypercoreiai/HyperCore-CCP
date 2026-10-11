@@ -127,12 +127,12 @@ pointing at **shard 1**. `--ple-gguf` is not needed: the engine finds the shard 
   "model_name": "qwen3.8-flash-next-ud-q4_k_xl",
   "log": "hypercore-ud-q4_k_xl.log",
   "host": "127.0.0.1",
-  "port": 8080
+  "port": 8081
 }
 ```
 
 ```sh
-.venv/bin/python -m serve.server --engine hypercore --config hypercore-ud-q4_k_xl.json --port 8080
+.venv/bin/python -m serve.server --engine hypercore --config hypercore-ud-q4_k_xl.json --port 8081
 ```
 
 (`engine/hypercore.exe` is setup's engine on Windows; a self-built one is `build/hypercore`.) The expert profile is the base

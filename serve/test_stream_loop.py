@@ -21,6 +21,7 @@ from serve.hypercore_supervisor import (
     WorkerBusy,
     WorkerRejected,
     WorkerUnreachable,
+    model_startup_s,
 )
 from serve.ipc_parser import CMD_CANCEL, STREAM_TERMINAL, STREAM_TOKEN
 from serve.server import stream_sse
@@ -224,6 +225,36 @@ class StreamReaderTest(unittest.TestCase):
         self.assertTrue(issubclass(WorkerBusy, WorkerRejected.__bases__[0]))
         self.assertTrue(issubclass(StreamStalled, Exception))
         self.assertTrue(issubclass(WorkerRejected, Exception))
+
+
+class StartupWall(unittest.TestCase):
+    """How long a worker is allowed to take before it answers READY.
+
+    The 30 s default is a worker with no model: it binds its socket in milliseconds. A
+    worker that has to load weights takes the "minute or two" the run script warns about,
+    and that is what made setup's "Tune HyperCore for this PC" fail with "worker did not
+    accept a connection within 30.0s" on a machine that starts the model fine otherwise.
+    """
+
+    def test_a_model_config_gets_the_load_allowance(self):
+        self.assertEqual(model_startup_s({"exe": "/engine/hypercore"}), 180.0)
+        self.assertEqual(model_startup_s({"exe": "engine/hypercore", "model_startup_s": 240}), 240.0)
+        self.assertEqual(model_startup_s({"startup_timeout_s": 60}), 60.0)
+
+    def test_a_worker_with_no_model_keeps_the_short_one(self):
+        self.assertEqual(model_startup_s({}), 30.0)
+
+    def test_a_bad_value_is_a_clear_error(self):
+        with self.assertRaises(ValueError):
+            model_startup_s({"startup_timeout_s": "soon"})
+
+    def test_the_supervisor_uses_it(self):
+        worker = ScriptedWorker(tokens=1)
+        sup = HyperCoreProcessSupervisor(transport=worker.connect, max_restarts=0,
+                                        startup_timeout_s=model_startup_s({"exe": "x"}))
+        self.assertEqual(sup.startup_timeout_s, 180.0)
+        sup.start()
+        sup.stop()
 
 
 if __name__ == "__main__":

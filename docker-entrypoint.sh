@@ -12,7 +12,7 @@ MODEL="${MODEL:-IQ2_XS}"
 CONTEXT="${CONTEXT:-32768}"
 VISION="${VISION:-no}"          # no | yes | cpu (the image encoder on the CPU)
 HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8080}"
+PORT="${PORT:-8081}"
 API_KEY="${API_KEY:-}"
 KV="${KV:-}"                    # int8 | q4_0 | k8v4; empty: setup.py's own default (int8)
 GPUS="${GPUS:-}"                # "0,2" or "all": one model across several cards (docs/MULTI_GPU.md)
@@ -53,7 +53,7 @@ else
 fi
 
 # Later starts skip straight here: setup.py finds the installed config and
-# launches serve/server.py (OpenAI- and Anthropic-compatible API on :8080).
+# launches serve/server.py (OpenAI- and Anthropic-compatible API on :8081).
 # GPUS / GPU / LAYER_SPLIT are repeated on purpose. Given at the start they pin the
 # cards for this model, and setup.py saves them in its config; without them a config
 # that names one card is offered once to a pair, on its own, when the host has two

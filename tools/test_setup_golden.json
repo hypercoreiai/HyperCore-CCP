@@ -39,7 +39,7 @@
    ],
    "log": "<T>/hypercore-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_s/tokenizer",
    "turn_tail_check": true
   }
@@ -84,7 +84,7 @@
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
    "turn_tail_check": true
   }
@@ -129,7 +129,7 @@
    ],
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer",
    "turn_tail_check": true
   }
@@ -174,7 +174,7 @@
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
    "turn_tail_check": true
   }
@@ -217,7 +217,7 @@
    ],
    "log": "<T>/hypercore-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer",
    "turn_tail_check": true
   }
@@ -266,7 +266,7 @@
    ],
    "log": "<T>/hypercore-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_s/tokenizer",
    "turn_tail_check": true
   }
@@ -315,7 +315,7 @@
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
    "turn_tail_check": true
   }
@@ -364,7 +364,7 @@
    ],
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer",
    "turn_tail_check": true
   }
@@ -413,7 +413,7 @@
    ],
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer",
    "turn_tail_check": true
   }
@@ -456,7 +456,7 @@
    ],
    "log": "<T>/hypercore-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer",
    "turn_tail_check": true
   }
@@ -505,7 +505,7 @@
    ],
    "log": "<T>/hypercore-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_s/tokenizer",
    "turn_tail_check": true
   }
@@ -554,7 +554,7 @@
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
    "turn_tail_check": true
   }
@@ -602,7 +602,7 @@
    ],
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer",
    "turn_tail_check": true
   }
@@ -650,7 +650,7 @@
    ],
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer",
    "turn_tail_check": true
   }
@@ -693,7 +693,7 @@
    ],
    "log": "<T>/hypercore-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer",
    "turn_tail_check": true
   }
@@ -736,7 +736,7 @@
    ],
    "log": "<T>/hypercore-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_s/tokenizer",
    "turn_tail_check": true
   }
@@ -781,7 +781,7 @@
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
    "turn_tail_check": true
   }
@@ -826,7 +826,7 @@
    ],
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer",
    "turn_tail_check": true
   }
@@ -871,7 +871,7 @@
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
    "turn_tail_check": true
   }
@@ -914,7 +914,7 @@
    ],
    "log": "<T>/hypercore-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer",
    "turn_tail_check": true
   }
@@ -959,7 +959,7 @@
    ],
    "log": "<T>/hypercore-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_s/tokenizer",
    "turn_tail_check": true
   }
@@ -1004,7 +1004,7 @@
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
    "turn_tail_check": true
   }
@@ -1049,7 +1049,7 @@
    ],
    "log": "<T>/hypercore-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer",
    "turn_tail_check": true
   }
@@ -1094,7 +1094,7 @@
    ],
    "log": "<T>/hypercore-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer",
    "turn_tail_check": true
   }
@@ -1137,7 +1137,7 @@
    ],
    "log": "<T>/hypercore-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
-   "port": 8080,
+   "port": 8081,
    "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer",
    "turn_tail_check": true
   }
