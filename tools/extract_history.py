@@ -1,4 +1,5 @@
-"""Pull the useful parts out of the Strata_chats transcripts, grouped by topic.
+"""Pull the useful parts out of the chat transcripts under ~/black_box_chats and
+~/Strata_chats, grouped by topic.
 
 A chat transcript is mostly reasoning. What is worth keeping is: what the user asked
 for, what was decided, what was changed, what was measured, and what is still open.

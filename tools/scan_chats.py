@@ -1,4 +1,5 @@
-"""Scan the Strata_chats transcripts and print a compact profile of each:
+"""Scan the chat transcripts under ~/black_box_chats and ~/Strata_chats and print a compact
+profile of each:
 user turns (the actual requests), section headings, and topic-keyword counts.
 
     python3 tools/scan_chats.py            # profile every file
