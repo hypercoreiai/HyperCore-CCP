@@ -1,6 +1,6 @@
 # Issues, root causes and fixes
 
-Accumulated from 3 transcripts, 3 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 25 transcripts, 36 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state
@@ -45,10 +45,137 @@ how the thing works, as the chats established it
 - Live proof: `/metrics` shows a 146,161-token prompt with `prompt_ms 36888.0` finishing `finish: "stop"`, and `grep -c "no frame for" hypercore-q2_0.log` is 0.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-13-20.md</sub>
 
+**/proc**
+- Fixture `/proc` text through a recording stand-in for `open()`, asserting every handle is closed — a leak is caught by the test, not by the OS
+  <sub>2026-10-06 · strata-chat-2026-10-06-23-05.md</sub>
+
+**_created**
+- Two caveats worth knowing: denials come back as error text, so the hub still marks the call `ok=True` — the reason is in the payload; and `_created` is per-process, so after the restart nothing counts as session-owned until a tool writes it.
+  <sub>2026-10-05 · strata-chat-2026-10-05-23-07.md</sub>
+
+**cfunctype**
+- The callback is rebound each iteration. The previous `CFUNCTYPE` object is freed while the request thread still holds the raw pointer: The segfault is in `destroy()`, not in the engine.
+  <sub>2026-10-09 · strata-chat-2026-10-09-18-55.md</sub>
+
 **do_post**
 - Request exception — an unhandled exception inside `do_POST` no longer leaves a half-written SSE body and the stdlib traceback; it now closes the stream with an error event and returns a 500 JSON only when nothing was sent.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md</sub>
 
+**doc_to_target**
+- I re-ran it through `score_agent.py` and it reproduced — after fixing a real bug: for `multiple_choice` tasks `doc_to_target` returns a choice index, not the answer string, so the original string-comparison scored all 60 MC items as misses.
+  <sub>2026-10-07 · strata-chat-2026-10-07-17-37.md</sub>
+
+**example debugging input**
+- Example of debugging an input gray image (raw, not preprocessed): Now both the LLaMA part and the image encoder is in … [universal] /home/ai-user0/Strata/third_party/llama.cpp/docs/multimodal/llava.md … the LLaVA model to LLaMA and multimodel projector constituents: 4.
+  <sub>2026-10-05 · strata-chat-2026-10-05-23-36.md</sub>
+
+**filter.note**
+- The reason is printed to stderr and surfaced in the UI as `filter.note`.
+  <sub>2026-10-09 · strata-chat-2026-10-09-15-05.md</sub>
+
+**generating**
+- Against HEAD it reproduces your exact traceback: With the fix, the probe returns: And the prefill test confirms the `reading` → `generating` transition is real, not a guess: with `prefill_s=0.25` the view shows `["reading", "idle"]` during prefill and all-idle after the request finishes.
+  <sub>2026-10-10 · strata-chat-2026-10-10-12-04.md</sub>
+
+**hypercore_worker_binary**
+- Root cause: `src/interface/hypercore_bridge.cpp:445` reads the worker binary from the environment before the JSON, matching the documented precedence (defaults → env → JSON): So with `HYPERCORE_WORKER_BINARY` set, `{"engine_mode":"worker"}` does have a binary and init correctly succeeds.
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-11-52.md</sub>
+
+**hypercoreengine**
+- Legacy text protocol — `HyperCoreEngine` lives in `serve/fixtures/legacy_engine.py` and is instantiated only by the four test files; production reaches the engine through `HyperCoreProcessSupervisor`.
+  <sub>2026-10-10 · strata-chat-2026-10-10-00-02.md</sub>
+
+**numerous other features**
+- Numerous other new features, improvements, and bug fixes are fully listed in the [Change History](ChangeHistory.md) file.
+  <sub>2026-10-07 · strata-chat-2026-10-07-18-39.md</sub>
+
+**pool.cpp**
+- Crash isolation is tested, but with a caveat I've written down: the three `std::abort()` calls in `pool.cpp` are not reachable from the fixture, so the test SIGKILLs the worker.
+  <sub>2026-10-09 · strata-chat-2026-10-09-18-55.md</sub>
+
+**printf**
+- The beginning and the end are kept] This tool takes start_line/end_line: read the next range instead of repeating the same call.prefix; the guard test proves an 8-byte caller is untouched beyond 8 bytes | One test bug worth recording, because it is the kind that hides a real failure: reading the caller's struct in the same `printf` argument list as the call that fills it.
+  <sub>2026-10-09 · strata-chat-2026-10-09-18-55.md</sub>
+
+**retrying model fits**
+- Retrying with a model that fits: Root cause found: torch 2.10.0+cu128 has no kernels for sm_61 (GTX 1060 is Pascal) — `torch.cuda.is_available()` returns True but every kernel call fails.
+  <sub>2026-10-07 · strata-chat-2026-10-07-17-37.md</sub>
+
 **start_engine**
 - It is a traceback from `tools/calibrate.py:401`: It died at the first `start_engine` call (`calibrate.py:258`), before any sweep ran.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-15-51.md</sub>
+
+**terminal__run/pipe/process/repl/symbols/check/install/build/compile/tidy/debug/query/compare/status**
+- Terminal: `terminal__run/pipe/process/repl/symbols/check/install/build/compile/tidy/debug/query/compare/status` — git, ruff, mypy, pylint, pytest, cmake, clang-tidy, gdb, valgrind, jq, yq, sqlite3, strace are all present.
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-18-06.md</sub>
+
+**tests/**
+- The rename script itself is the root cause. `tools/rename_hypercore.sh` greps only `src include sycl serve tools bench CMakeLists.txt` — `tests/` is not in the list.
+  <sub>2026-10-10 · strata-chat-2026-10-10-03-30.md</sub>
+
+**trace.py**
+- I instrumented the identical code path with a stall in the unlocked window so the schedule is reproducible rather than luck-dependent (`trace.py`, actual output): What the pointer state is doing. Three inserts against a cache of three slots produced three evictions when only two were needed.
+  <sub>2026-10-07 · strata-chat-2026-10-07-14-36.md</sub>
+
+**verdict initio prediction**
+- Verdict: a ±10 K ab-initio Tc prediction for an unsynthesized compound is not currently achievable, and the reason is specific and well-understood. The pipeline. DFPT phonons → Eliashberg/Allen–Dynes: `ω_log` and `λ` are genuinely computable from first principles.
+  <sub>2026-10-07 · strata-chat-2026-10-07-18-16.md</sub>
+
+## Decisions taken
+
+what was chosen, and why, oldest first
+
+
+**fixed _callee_name helper** · 6 chats
+- One bug I found and fixed. My first version used `zip -x "black_box/.venv/"`, and it silently archived the whole virtualenv — 15,035 extra entries.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-08-31.md</sub>
+- Also fixed, because it was blocking the run: the `no frame for 30.0s` stall.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-07-09.md</sub>
+- The socket issue is fixed and now covered by install.sh.
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-18-54.md</sub>
+- Verified: Two bugs I fixed in your version: `self._session_counter += 1` inside worker threads is load/add/store, so two threads can land on the same id and overwrite each other's event — now behind a lock, with `_next_session_id()` as the single source.
+  <sub>2026-10-09 · strata-chat-2026-10-09-18-55.md</sub>
+- Fixed with `pip install --user "huggingface-hub<1.0"` then `transformers==5.19.0 accelerate`.
+  <sub>2026-10-07 · strata-chat-2026-10-07-17-37.md</sub>
+- Fixed with a `_callee_name()` helper, plus a self-test that feeds the guard a deliberately leaking function so it cannot degrade into a no-op again.
+  <sub>2026-10-06 · strata-chat-2026-10-06-23-05.md</sub>
+
+**--port**
+- Three bugs it caught and I fixed: `status` printed nothing because `describe()` read `$pid/cmdline` instead of `/proc/$pid/cmdline`; a transient `/proc` entry vanished mid-scan and killed the script under `set -e`; and `--port` parsing used `shift` inside a `for` loop.
+  <sub>2026-10-05 · strata-chat-2026-10-05-23-07.md</sub>
+
+**/etc/sudoers.d/ai-user0**
+- Current (installed): `sudoers.ai-user0.fixed`. It is byte-for-byte the logic running as `/etc/sudoers.d/ai-user0`.
+  <sub>2026-10-05 · strata-chat-2026-10-05-20-19.md</sub>
+
+**/usr/sbin/visudo**
+- The two bugs I flagged earlier are fixed in the installed file: the visudo grant now names `/usr/sbin/visudo` (the real path), and docker is granted — `sudo -n /usr/bin/docker ps` returns an empty container table, exit 0.
+  <sub>2026-10-05 · strata-chat-2026-10-05-20-19.md</sub>
+
+**bench/results/2026-10-09-blackbox-api/worker_mode_test.c**
+- Two bugs fixed in `bench/results/2026-10-09-blackbox-api/worker_mode_test.c`: 1.
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-11-52.md</sub>
+
+**checked same class**
+- I checked for the same class of bug everywhere (`grep -E '\[[0-9]+\] = "(HYPERCORE|HyperCore|hypercore)'`) — those two were the only fixed-size buffers affected.
+  <sub>2026-10-10 · strata-chat-2026-10-10-07-17.md</sub>
+
+**download_auth**
+- Verified it still works for real: Two bugs the tests exposed, fixed along the way The `download_auth` tests failed for a different reason than the other nine — they were testing functions that didn't exist (`download_refusal`, `download_headers`, `hf_access_token`).
+  <sub>2026-10-10 · strata-chat-2026-10-10-08-05.md</sub>
+
+**leak_demo.cpp**
+- One subtle bug fixed: the command guard's name pattern didn't accept `+`, so `g++` was read as an argument and `leak_demo.cpp` was treated as the program.
+  <sub>2026-10-03 · strata-chat-2026-10-03-19-51.md</sub>
+
+**min_width**
+- Fixed a precedence bug in the `min_width` filter Rewritten as an explicit loop.
+  <sub>2026-10-03 · strata-chat-2026-10-03-14-03.md</sub>
+
+**mute_ping**
+- Added `mute_ping` to `serve/frame_fixture.py` and `test_a_silent_link_is_called_unreachable_not_stalled`, which also asserts the host reaps its slot (`sup.in_flight() == 0`) either way.
+  <sub>2026-10-10 · strata-chat-2026-10-10-00-02.md</sub>
+
+**serve/terminal_mcp.py**
+- Added to `serve/terminal_mcp.py` (server now exposes 14 tools: `run, pipe, process, repl, symbols, check, install, status` + `build, compile, tidy, debug, query, compare`).
+  <sub>2026-10-03 · strata-chat-2026-10-03-19-51.md</sub>

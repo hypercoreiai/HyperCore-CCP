@@ -17,9 +17,10 @@ import sys
 import os
 from pathlib import Path
 
-# The transcripts live outside the repository. Override with CHAT_SOURCE or --source.
-DEFAULT_SOURCE = Path("/home/ai-user0/black_box_chats")
-CHATS = Path(os.environ.get("CHAT_SOURCE") or DEFAULT_SOURCE)
+# Transcript folders, read in the order given. Override with CHAT_SOURCE (comma
+# separated) or --source.
+DEFAULT_SOURCES = (Path("/home/ai-user0/black_box_chats"), Path("/home/ai-user0/Strata_chats"))
+SOURCES = [Path(p) for p in (os.environ.get("CHAT_SOURCE") or "").split(",") if p.strip()] or list(DEFAULT_SOURCES)
 OUT = Path(__file__).resolve().parents[1] / "data" / "history" / "raw"
 
 TOPICS = {
@@ -181,20 +182,23 @@ def main() -> int:
     per_topic: dict[str, list[tuple[str, str]]] = collections.defaultdict(list)
     file_topics: dict[str, collections.Counter] = {}
 
-    for p in sorted(CHATS.iterdir()):
-        if not p.is_file() or p.stat().st_size < 500:
+    for folder in SOURCES:
+        if not folder.is_dir():
             continue
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        counts: collections.Counter[str] = collections.Counter()
-        lines = user_turns(text) + assistant_facts(text)
-        for line in lines:
-            for t in tag(line):
-                counts[t] += 1
-                per_topic[t].append((p.name, line))
-        file_topics[p.name] = counts
+        for p in sorted(folder.iterdir()):
+            if not p.is_file() or p.stat().st_size < 500:
+                continue
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            counts: collections.Counter[str] = collections.Counter()
+            lines = user_turns(text) + assistant_facts(text)
+            for line in lines:
+                for t in tag(line):
+                    counts[t] += 1
+                    per_topic[t].append((p.name, line))
+            file_topics[p.name] = counts
 
     if a.stats:
         for name, c in sorted(file_topics.items()):

@@ -153,11 +153,24 @@ class Output(unittest.TestCase):
             self.skipTest("data/history has not been built")
         import json
         doc = json.loads(index.read_text(encoding="utf-8"))
-        if "source" not in doc:      # built before the builder recorded its source
-            self.skipTest("index.json does not say which folder it was built from")
-        built_from = Path(doc["source"])
+        if "source_folders" not in doc:      # built before the builder recorded its folders
+            self.skipTest("index.json does not say which folders it was built from")
+        folders = [Path(f) for f in doc["source_folders"]]
         for name in doc["sources"]:
-            self.assertTrue((built_from / name).is_file(), name)
+            hit = any((folder / name).is_file() or (folder / name.split("/")[-1]).is_file()
+                      for folder in folders)
+            self.assertTrue(hit, name)
+
+    def test_every_source_folder_named_in_index_json_exists(self):
+        index = ROOT / "data" / "history" / "index.json"
+        if not index.is_file():
+            self.skipTest("data/history has not been built")
+        import json
+        doc = json.loads(index.read_text(encoding="utf-8"))
+        if "source_folders" not in doc:
+            self.skipTest("index.json does not record its source folders")
+        for folder in doc["source_folders"]:
+            self.assertTrue(Path(folder).is_dir(), folder)
 
 
 class Scrubbing(unittest.TestCase):
@@ -195,37 +208,91 @@ class Scrubbing(unittest.TestCase):
 
 
 class Source(unittest.TestCase):
-    """The transcripts are outside the repository and the path is overridable."""
+    """The transcripts are outside the repository, and more than one folder can be read
+    in a single pass."""
 
-    def test_the_default_is_the_transcripts_folder(self):
-        self.assertEqual(str(BH.DEFAULT_SOURCE), "/home/ai-user0/black_box_chats")
-        self.assertEqual(BH.CHATS, BH.DEFAULT_SOURCE)
+    def test_the_default_is_the_current_tree_then_the_older_one(self):
+        self.assertEqual([str(p) for p in BH.DEFAULT_SOURCES],
+                         ["/home/ai-user0/black_box_chats", "/home/ai-user0/Strata_chats"])
+        self.assertEqual(BH.SOURCES, list(BH.DEFAULT_SOURCES))
+
+    def test_parse_sources_splits_a_comma_or_space_separated_list(self):
+        got = BH.parse_sources("/a/b, /a/c")
+        self.assertEqual([str(p) for p in got], ["/a/b", "/a/c"])
+        self.assertEqual(BH.parse_sources(None), list(BH.DEFAULT_SOURCES))
 
     def test_a_source_and_an_out_dir_given_on_the_command_line_are_used(self):
         import tempfile
         fixture = ("# chat\n\n## You\nrun the checkpoint and push it\n\n"
-                   "## Assistant\n- the remote `origin` keeps the token "
-                   "ghp_TESTTOKEN0123456789abcdef for test@example.com\n")
+                   "## Assistant\n- the `browser_mcp` server keeps the token "
+                   "ghp_TESTTOKEN0123456789abcdef for test@example.com\n"
+                   "- the `browser_mcp` server is a separate worker process\n")
         with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as out:
-            Path(src, "2026-10-11-chat.md").write_text(fixture * 3, encoding="utf-8")
+            Path(src, "2026-10-11-chat.md").write_text(fixture * 6, encoding="utf-8")
             saved, sys.argv = sys.argv, ["build_history.py", "--source", src, "--out", out]
             try:
                 code = BH.main()
+                used = list(BH.SOURCES)
             finally:
-                sys.argv, BH.CHATS, BH.HIST = saved, BH.DEFAULT_SOURCE, BH.HIST
+                sys.argv, BH.SOURCES, BH.HIST = saved, list(BH.DEFAULT_SOURCES), BH.HIST
             self.assertEqual(code, 0, "the builder found the transcripts it was given")
+            self.assertEqual(used, [Path(src)])
             written = [p for p in Path(out).rglob("*") if p.is_file()]
             self.assertTrue(written, "nothing was written")
             for p in written:
                 self.assertNotIn("ghp_", p.read_text(encoding="utf-8"), p.name)
 
+    def test_two_folders_are_merged_in_one_pass(self):
+        import json
+        import tempfile
+        a = ("# chat a\n\n## You\nfix the browser worker\n\n"
+             "## Assistant\n- the `browser_mcp` server keeps its worker alive between requests\n")
+        b = ("# chat b\n\n## You\ncheck the cache\n\n"
+             "## Assistant\n- the `expert_source.cpp` expert cache is cleared on every layer split\n")
+        with tempfile.TemporaryDirectory() as fa, tempfile.TemporaryDirectory() as fb, \
+             tempfile.TemporaryDirectory() as out:
+            Path(fa, "2026-10-11-chat.md").write_text(a * 6, encoding="utf-8")
+            Path(fb, "2026-10-02-chat.md").write_text(b * 6, encoding="utf-8")
+            saved, sys.argv = sys.argv, ["build_history.py", "--source", f"{fa},{fb}", "--out", out]
+            try:
+                code = BH.main()
+            finally:
+                sys.argv, BH.SOURCES, BH.HIST = saved, list(BH.DEFAULT_SOURCES), BH.HIST
+            self.assertEqual(code, 0)
+            doc = json.loads((Path(out) / "index.json").read_text(encoding="utf-8"))
+            self.assertEqual(doc["transcripts"], 2, doc["transcripts"])
+            self.assertEqual(sorted(doc["source_folders"]), sorted([fa, fb]))
+            text = "".join(p.read_text(encoding="utf-8") for p in Path(out, "topics").glob("*.md"))
+            self.assertIn("browser_mcp", text)
+            self.assertIn("expert cache", text)
+
+    def test_the_same_file_name_in_two_folders_is_not_collapsed(self):
+        import json
+        import tempfile
+        body = ("# chat\n\n## You\nfix the worker\n\n"
+                "## Assistant\n- the `browser_mcp` server keeps its worker alive between requests\n")
+        with tempfile.TemporaryDirectory() as fa, tempfile.TemporaryDirectory() as fb, \
+             tempfile.TemporaryDirectory() as out:
+            Path(fa, "2026-10-11-chat.md").write_text(body * 6, encoding="utf-8")
+            Path(fb, "2026-10-11-chat.md").write_text(body * 6, encoding="utf-8")
+            saved, sys.argv = sys.argv, ["build_history.py", "--source", f"{fa},{fb}", "--out", out]
+            try:
+                BH.main()
+            finally:
+                sys.argv, BH.SOURCES, BH.HIST = saved, list(BH.DEFAULT_SOURCES), BH.HIST
+            doc = json.loads((Path(out) / "index.json").read_text(encoding="utf-8"))
+            labels = sorted(doc["sources"])
+            self.assertEqual(len(labels), 2, labels)          # both kept, not merged
+            self.assertTrue(any("/" in l for l in labels), labels)
+
     def test_a_hand_written_note_is_inserted_scrubbed(self):
         import tempfile
         fixture = ("# chat\n\n## You\nrun the checkpoint and push it\n\n"
-                   "## Assistant\n- the remote `origin` keeps the token "
-                   "ghp_TESTTOKEN0123456789abcdef for test@example.com\n")
+                   "## Assistant\n- the `browser_mcp` server keeps the token "
+                   "ghp_TESTTOKEN0123456789abcdef for test@example.com\n"
+                   "- the `browser_mcp` server is a separate worker process\n")
         with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as out:
-            Path(src, "2026-10-11-chat.md").write_text(fixture * 3, encoding="utf-8")
+            Path(src, "2026-10-11-chat.md").write_text(fixture * 6, encoding="utf-8")
             notes = Path(out, "notes")
             notes.mkdir(parents=True)
             for topic in BH.TOPICS:
@@ -236,7 +303,7 @@ class Source(unittest.TestCase):
             try:
                 code = BH.main()
             finally:
-                sys.argv, BH.CHATS, BH.HIST = saved, BH.DEFAULT_SOURCE, BH.HIST
+                sys.argv, BH.SOURCES, BH.HIST = saved, list(BH.DEFAULT_SOURCES), BH.HIST
             self.assertEqual(code, 0)
             for f in Path(out, "topics").glob("*.md"):
                 text = f.read_text(encoding="utf-8")
@@ -245,11 +312,11 @@ class Source(unittest.TestCase):
                 self.assertNotIn("test@example.com", text, f.name)
 
     def test_a_missing_source_reports_and_returns_non_zero(self):
-        saved, BH.CHATS, sys.argv = BH.CHATS, Path("/no/such/transcript/folder"), ["build_history.py"]
+        saved, BH.SOURCES, sys.argv = BH.SOURCES, [Path("/no/such/transcript/folder")], ["build_history.py"]
         try:
             self.assertEqual(BH.main(), 1)
         finally:
-            sys.argv, BH.CHATS = saved, BH.DEFAULT_SOURCE
+            sys.argv, BH.SOURCES = saved, list(BH.DEFAULT_SOURCES)
 
 
 if __name__ == "__main__":

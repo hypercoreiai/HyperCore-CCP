@@ -58,7 +58,8 @@ CDN — `serve/web/` is one page, its styles, an inline SVG sprite and the Outfi
   filled from the server clock, so a profile never hard-codes a year that goes stale. The `system_prompt`
   in that file also names the two resources the model is told to use: the accumulated development history
   under `data/history/` (built by `tools/build_history.py` from the chat transcripts in
-  `~/black_box_chats/`, one file per topic; live keys, addresses and handles are scrubbed
+  `~/black_box_chats/` and, as a second pass, the older `~/Strata_chats/`; one file per
+  topic; live keys, addresses and handles are scrubbed
   on the way out, so the tree is safe to commit)
   and the Assist tools that reach an external model. `GET /prompts` returns it as markdown, and the page
   sends it as the first system turn of every chat.

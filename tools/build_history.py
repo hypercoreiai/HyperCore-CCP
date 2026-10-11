@@ -11,7 +11,7 @@ Two views of the same extraction:
 
     python3 tools/build_history.py            # rebuild
     python3 tools/build_history.py --topics   # just the topic counts
-    python3 tools/build_history.py --source /path/to/transcripts
+    python3 tools/build_history.py --source /path/a,/path/b   # read two folders in one pass
 
 Re-running is safe: the transcripts are the source of truth and the files are regenerated from
 them. A hand-written note in topics/<topic>.notes.md is left alone.
@@ -27,10 +27,21 @@ from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
-# The transcripts live outside the repository. Override with CHAT_SOURCE or --source.
-DEFAULT_SOURCE = Path("/home/ai-user0/black_box_chats")
-CHATS = Path(os.environ.get("CHAT_SOURCE") or DEFAULT_SOURCE)
+# Transcript folders, read in the order given. The current tree is in ~/black_box_chats;
+# ~/Strata_chats is the older one and is merged in the same pass, so a fact learned
+# before the restart is not lost. Override with CHAT_SOURCE (comma separated) or --source.
+DEFAULT_SOURCES = (Path("/home/ai-user0/black_box_chats"), Path("/home/ai-user0/Strata_chats"))
 HIST = Path(__file__).resolve().parents[1] / "data" / "history"
+
+
+def parse_sources(value: str | None) -> list[Path]:
+    """Split a comma or whitespace separated list of folders into paths."""
+    if not value:
+        return list(DEFAULT_SOURCES)
+    return [Path(p) for p in re.split(r"[,\s]+", value) if p.strip()]
+
+
+SOURCES = parse_sources(os.environ.get("CHAT_SOURCE"))
 
 # ---------------------------------------------------------------- the categories
 TOPICS = {
@@ -342,34 +353,49 @@ def group(items: list[dict]) -> list[tuple[str, list[dict]]]:
     return sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
 
 
+def source_label(path: Path, taken: set[str]) -> str:
+    """A name that identifies one transcript. Two folders can hold the same file name,
+    so a collision is attributed to its folder rather than silently merged."""
+    name = path.name
+    if name in taken:
+        name = f"{path.parent.name}/{name}"
+    return name
+
+
 def extract() -> dict:
     entries: dict[str, list[dict]] = defaultdict(list)
     seen: dict[str, set[str]] = defaultdict(set)
     sources: dict[str, dict] = {}
 
-    for path in sorted(CHATS.iterdir()):
-        if not path.is_file() or path.stat().st_size < 500:
+    for folder in SOURCES:
+        if not folder.is_dir():
             continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        d = chat_date(path.name)
-        asks = user_asks(text)
-        found = sentences(text)
-        here: set[str] = set()
-        for sentence in found:
-            key = normalise(sentence)[:200]
-            for topic, score in sorted(topic_scores(sentence).items(), key=lambda kv: -kv[1])[:2]:
-                if score < 4 or key in seen[topic]:
-                    continue
-                seen[topic].add(key)
-                here.add(topic)
-                entries[topic].append({"date": d, "source": path.name,
-                                      "section": kind(sentence), "text": sentence})
-        sources[path.name] = {"date": d, "size_kb": path.stat().st_size // 1024,
-                             "requests": len(asks), "topics": sorted(here), "asks": asks[:12],
-                             "outcomes": [f for f in found if kind(f) in ("decisions", "current")][:15]}
+        for path in sorted(folder.iterdir()):
+            if not path.is_file() or path.stat().st_size < 500:
+                continue
+            try:
+                text = scrub(path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+            name = source_label(path, set(sources))
+            d = chat_date(name)
+            asks = user_asks(text)
+            found = sentences(text)
+            if not asks and not found:
+                continue          # a context file, not a transcript
+            here: set[str] = set()
+            for sentence in found:
+                key = normalise(sentence)[:200]
+                for topic, score in sorted(topic_scores(sentence).items(), key=lambda kv: -kv[1])[:2]:
+                    if score < 4 or key in seen[topic]:
+                        continue
+                    seen[topic].add(key)
+                    here.add(topic)
+                    entries[topic].append({"date": d, "source": name,
+                                          "section": kind(sentence), "text": sentence})
+            sources[name] = {"date": d, "folder": str(folder), "size_kb": path.stat().st_size // 1024,
+                            "requests": len(asks), "topics": sorted(here), "asks": asks[:12],
+                            "outcomes": [f for f in found if kind(f) in ("decisions", "current")][:15]}
 
     for items in entries.values():
         items.sort(key=lambda e: (e["date"], e["source"]))
@@ -386,19 +412,23 @@ SECTIONS = {
 
 
 def main() -> int:
-    global CHATS, HIST
+    global SOURCES, HIST
     ap = argparse.ArgumentParser()
     ap.add_argument("--topics", action="store_true", help="only print the topic counts")
-    ap.add_argument("--source", default=None, help=f"transcript folder (default {DEFAULT_SOURCE})")
+    ap.add_argument("--source", action="append", default=None,
+                    help="transcript folder, repeatable or comma separated "
+                         f"(default {', '.join(map(str, DEFAULT_SOURCES))})")
     ap.add_argument("--out", default=None, help=f"where to write (default {HIST})")
     a = ap.parse_args()
     if a.source:
-        CHATS = Path(a.source)
+        SOURCES = parse_sources(",".join(a.source))
     if a.out:
         HIST = Path(a.out)
-    if not CHATS.is_dir():
-        print(f"no transcripts at {CHATS}", file=sys.stderr)
+    usable = [s for s in SOURCES if s.is_dir()]
+    if not usable:
+        print(f"no transcripts at any of {SOURCES}", file=sys.stderr)
         return 1
+    SOURCES = usable
 
     data = extract()
     entries, sources = data["entries"], data["sources"]
@@ -451,7 +481,7 @@ def main() -> int:
 
     (HIST / "index.json").write_text(json.dumps({
         "built": str(date.today()), "transcripts": len(sources),
-        "source": str(CHATS),
+        "source_folders": [str(s) for s in SOURCES],
         "categories": {t: TOPICS[t][0] for t in TOPICS},
         "topics": {t: len(v) for t, v in sorted(entries.items())},
         "sources": sources,

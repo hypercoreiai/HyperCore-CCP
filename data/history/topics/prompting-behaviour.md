@@ -1,6 +1,6 @@
 # Prompting, agents and turn behaviour
 
-Accumulated from 3 transcripts, 5 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 12 transcripts, 20 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state
@@ -33,13 +33,29 @@ base model refuses things it should not; the profiles are the mechanism, not the
 how the thing works, as the chats established it
 
 
-**--turn-tail-check** · 3 chats
+**--turn-tail-check** · 5 chats
 - `tools/test_setup_config.py`: new `ServerDefaults` class (new install gets all three; `--host 127.0.0.1 --api-key s3cret --no-turn-tail-check` wins; an existing config keeps its own values; the run script carries `--turn-tail-check` and honours a config that turns it off).
   <sub>2026-10-11 · hypercore-chat-2026-10-11-13-20.md</sub>
 - Opt-in via `--turn-tail-check` or `"turn_tail_check": true`; the question text is overridable with `--turn-tail-prompt` / `turn_tail_prompt`.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md</sub>
 - One caveat: the turn-tail check is off by default — the running server was started without `--turn-tail-check`, so it won't fire until you add the flag or set `"turn_tail_check": true` in the profile.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md</sub>
+- Turn-tail check (`--turn-tail-check`, or `"turn_tail_check": true` in the model's config — on by default for anything `setup` writes): when a turn would end, the server appends one short question asking the model to check its answer against the request.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-08-01.md · also in hypercore-chat-2026-10-11-08-01.md</sub>
+- `run_flags()` / `write_run_script()` read the config and emit `--turn-tail-check` in `run-<model>.sh` / `.bat`; a config that says `false` is respected.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-07-09.md</sub>
+
+**--api-key**
+- `--no-turn-tail-check` is the off switch; `--host` / `--api-key` still win.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-07-09.md</sub>
+
+**--apply_chat_template**
+- Concrete next step: `Qwen/Qwen3-0.6B` is a real instruct model that fits the 1060 and needs no auth — I can run it with `--apply_chat_template` on generation tasks (gsm8k, mmlu) and loglikelihood tasks at `batch_size 2`.
+  <sub>2026-10-07 · strata-chat-2026-10-07-17-37.md</sub>
+
+**--tail-role-token**
+- `effort_position: "end"` needs engine ≥ 0.1.39. You're on 0.1.40, so it will apply; on startup it prints `effort_position end: a request's non-default reasoning effort goes right before the answer, so changing it keeps the cached conversation` and adds `--tail-role-token` to the args.
+  <sub>unknown · context.txt</sub>
 
 **.calibrate_progress.log**
 - `.calibrate_progress.log` shows: The calibrator starts its own worker while the live server (pid 998337, started 14:04, `--port 8081 --turn-tail-check`) already holds the model, so the second engine cannot get VRAM.
@@ -48,3 +64,48 @@ how the thing works, as the chats established it
 **/health**
 - Live state: pid 793996 on port 8081, started from `run-q2_0.sh` with `--host 0.0.0.0 --turn-tail-check`; `/health` reports `api_key: true`, and a streamed request emitted `tail_check {"result":"continue","checks":1,"max_checks":3}`, so the turn-tail check is active.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-13-20.md</sub>
+
+**/prompts**
+- Docs — a bullet in README "Using it", an Agent prompts section in `docs/DETAILS.md` (with the shape of a profile and the rules: any top‑level key after `system_prompt` is an agent, name comes from `agent_profile.name`, empty entries are skipped, selection is remembered per browser, >20,000 chars is sent cut off), and a `/prompts` row in the endpoint table.
+  <sub>2026-10-04 · strata-chat-2026-10-04-05-56.md</sub>
+
+**anthropic_thinking**
+- Four have real consequences on this machine: `reasoning_budget_tokens`, `anthropic_thinking`, `sampling.` are genuinely optional — leaving them unset inherits the model's defaults, which is fine.
+  <sub>2026-10-07 · strata-chat-2026-10-07-09-31.md</sub>
+
+**chat template renders**
+- The chat template renders the tool block first, then the profile, then history (`serve/chat_template.jinja:72`), and reuse is prefix-strict — anything that changes at the front invalidates everything after it.
+  <sub>unknown · context.txt</sub>
+
+**context**
+- New tests assert the request body contains no `temperature`, `top_p`, `top_k`, `reasoning_effort`, `seed` or `context` field, and that a caller can still set the cap.
+  <sub>2026-10-09 · strata-chat-2026-10-09-15-05.md</sub>
+
+**messages**
+- On load or New Chat, insert a system message into the chat showing the injected system prompt + selected agent prompt (rendered as a collapsed card), and set the `messages` array to include `{role: "system", ...}` so apiMessages() includes it as the first message in the API request.
+  <sub>2026-10-04 · strata-chat-2026-10-04-05-56.md</sub>
+
+**ni_run-q2_0.json**
+- Your live archive still uses `ni_run-q2_0.json` configs — do you want the personal variants kept as an example, or should the live system be migrated to the standard names?
+  <sub>2026-10-10 · strata-chat-2026-10-10-05-20.md</sub>
+
+**ni_strata-q2_0.shared-settings.json**
+- Diff against the backup — exactly the four changes, nothing else: Plus the profile alignment: `strata-q2_0.shared-settings.json` copied to `ni_strata-q2_0.shared-settings.json`, so the Chat-tab defaults (temperature 0.7, top_p 0.95, top_k 20, reasoning_effort high) now belong to the profile that's actually running.
+  <sub>unknown · context.txt</sub>
+
+**reasoning_effort high second**
+- `reasoning_effort=high` is the second-biggest cost after prefill: round 14 alone produced 1,467 reasoning tokens.
+  <sub>2026-10-04 · strata-chat-2026-10-04-03-57.md</sub>
+
+**yi_strata-q2_0.shared-settings.json**
+- The values in `yi_strata-q2_0.shared-settings.json` (temperature 0.7, top_p 0.95, top_k 20, reasoning_effort high) are simply dead.
+  <sub>2026-10-07 · strata-chat-2026-10-07-09-31.md · also in strata-chat-2026-10-07-09-31.md</sub>
+
+## Decisions taken
+
+what was chosen, and why, oldest first
+
+
+**browser**
+- The rendered prefix changed. Switching agent profiles, adding an MCP server (I added `browser` this session — the tool catalog is part of the system prompt), or changing reasoning effort when it's rendered at the top of the prompt.
+  <sub>unknown · context.txt</sub>

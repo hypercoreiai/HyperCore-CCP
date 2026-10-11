@@ -1,6 +1,6 @@
 # Setup, run configs and defaults
 
-Accumulated from 4 transcripts, 11 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 33 transcripts, 93 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state
@@ -39,49 +39,360 @@ agent profiles.
 how the thing works, as the chats established it
 
 
-**--turn-tail-check** · 2 chats
+**./setup.sh** · 4 chats
+- `./setup.sh` (which execs `setup.py`) now writes those three defaults into every run config and run script it generates.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-13-20.md</sub>
+- One caveat: `hypercore-q2_0.json` already existed, so I set its three keys by hand rather than re-running setup; a fresh `./setup.sh` produces the same.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-07-09.md</sub>
+- `tools/conversation_restore_speed.py` So `./setup.sh` hit `ImportError` inside `calibrate_config()`, which is wrapped in `except Exception` → `[!] the tuning did not finish ...
+  <sub>2026-10-10 · strata-chat-2026-10-10-12-04.md</sub>
+- `build-cuda/hypercore` is built but not copied to `engine/hypercore` — `engine/` still holds the stale Oct 6 `strata` binaries, so `./setup.sh` from this tree would still fetch a ready-made engine.
+  <sub>2026-10-10 · strata-chat-2026-10-10-05-20.md</sub>
+
+**setup offers measure** · 4 chats
+- setup.sh: "HyperCore for Linux: the first run installs everything and starts the model; later runs just start it." ✓ Good.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-08-01.md</sub>
+- `python3 setup.py --help` now runs, and Step 7's `import calibrate` resolves.
+  <sub>2026-10-10 · strata-chat-2026-10-10-03-30.md</sub>
+- Setup only ever writes `strata-<model>.json` (`setup.py:4920`), so re-running setup won't touch what's live.
+  <sub>2026-10-07 · strata-chat-2026-10-07-09-31.md</sub>
+- Setup offers to measure them on your PC after an install; `START-HERE.bat --calibrate` (Linux: `./setup.sh --calibrate`) does it any time.
+  <sub>2026-10-03 · strata-chat-2026-10-03-14-03.md</sub>
+
+**--turn-tail-check** · 3 chats
 - Opt-in via `--turn-tail-check` or `"turn_tail_check": true`; the question text is overridable with `--turn-tail-prompt` / `turn_tail_prompt`.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md</sub>
 - One caveat: the turn-tail check is off by default — the running server was started without `--turn-tail-check`, so it won't fire until you add the flag or set `"turn_tail_check": true` in the profile.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md</sub>
+- Turn-tail check (`--turn-tail-check`, or `"turn_tail_check": true` in the model's config — on by default for anything `setup` writes): when a turn would end, the server appends one short question asking the model to check its answer against the request.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-08-01.md · also in hypercore-chat-2026-10-11-08-01.md</sub>
 
-**./setup.sh**
-- `./setup.sh` (which execs `setup.py`) now writes those three defaults into every run config and run script it generates.
-  <sub>2026-10-11 · hypercore-chat-2026-10-11-13-20.md</sub>
+**setup.py** · 3 chats
+- `setup.py` no longer trusts "is llama.cpp here" — it checks the six files the two builds actually read before either build runs, and re-unpacks the pinned archive when one is missing: If the archive itself is short of a file, setup names the file and keeps the zip, instead of dying three folders deep in CMake.
+  <sub>2026-10-10 · strata-chat-2026-10-10-20-47.md</sub>
+- The rename is consistent now: `setup.py` `EXE = "hypercore"`, CMake `add_executable(hypercore …)`, `serve/server.py --engine hypercore` all agree.
+  <sub>2026-10-10 · strata-chat-2026-10-10-05-20.md</sub>
+- On a user's PC, `STRATA_` may already be set by `setup.py`.
+  <sub>2026-10-09 · strata-chat-2026-10-09-18-55.md</sub>
+
+**.env** · 2 chats
+- "FREE Frontier Model" — the Assist tab talks to `integrate.api.nvidia.com` with an `API_KEY` from `.env`; the repo does carry an archived catalogue of 38 NIM free-endpoint models (`serve/data/nvidia_free_models/`).
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-08-01.md</sub>
+- The key is not in the repo. `.env` (124 bytes) contains no `dtn_` string; `.github/workflows/boundary.yml:135` reads `secrets.DAYTONA_API_KEY`, which lives in GitHub's secret store, not in the project tree.
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-11-52.md</sub>
+
+**.gitignore** · 2 chats
+- One stray file worth noting: `.run-q2_0.sh.swp` (a vim swap file) is untracked in the root — `git clean -ndx` or a `.swp` line in `.gitignore` would handle it.
+  <sub>2026-10-10 · strata-chat-2026-10-10-12-04.md</sub>
+- I also copied `black_box/.env` → `Strata/.env` (the Assist tab needs `ENDPOINT`/`API_KEY`) and added `/.env` to Strata's `.gitignore`, which did not have it.
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-11-52.md · also in strata-chat-2026-10-09-09-50.md</sub>
+
+**/home/ai-user0/strata-data** · 2 chats
+- If finish: do I also rename `setup.py`'s engine target, config filenames, and env vars — and should the data folder `/home/ai-user0/Strata-data` become `HyperCore-data`?
+  <sub>2026-10-10 · strata-chat-2026-10-10-03-30.md</sub>
+- `settings_path()` at `setup.py:2936`: Holds `data_dir` (here `/home/ai-user0/Strata-data`), `installs`, and the per-GPU calibration table — keyed as `GPU|RAM|CPU|model|context|mode`, e.g.
+  <sub>2026-10-07 · strata-chat-2026-10-07-09-31.md</sub>
+
+**api_key** · 2 chats
+- `setup.py:4920` writes it: On this PC: Keys: `exe`, `args` (the engine flags), `cwd`, `tokenizer`, `model_name`, `log`, `lib_dirs`, `port`, and optionally `gpu`, `gpus_asked`, `layer_split`, `host`, `api_key`, `vision`, `draft_vocab`, `parallel`, `env`, `backend`.
+  <sub>2026-10-07 · strata-chat-2026-10-07-09-31.md</sub>
+- There are three configs for the same model (`strata-`, `ni_`, `yi_`) with different ports (8080 vs 8081) and different `api_key`/`host`/`vision` settings.
+  <sub>2026-10-07 · strata-chat-2026-10-07-09-31.md</sub>
+
+**ni_run-q2_0.sh** · 2 chats
+- Two things to separate: `ni_run-q2_0.sh` itself carries no tag. It just execs the server: The `[strata]` prefix on every output line is printed by the server code it launches — 139 literal occurrences across six modules.
+  <sub>2026-10-10 · strata-chat-2026-10-10-19-47.md</sub>
+- The running server is not the one `ni_run-q2_0.sh` starts. It was launched with `strata-q2_0.json`; `ni_run-q2_0.sh` (owned by `user0`, mode `rwxr--r--`, so I can't edit it) points at `ni_strata-q2_0.json`.
+  <sub>2026-10-05 · strata-chat-2026-10-05-23-07.md</sub>
+
+**write_setup_config calls every** · 2 chats
+- Hmm, calls==3 means: round1 (WORK) → not done → check round 2 (IGNORED) → text empty → `tail_is_done("")` False → then the guard `not (svc.turn_tail_check and checks < ...
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md</sub>
+- `write_setup_config()` calls it, so every `hypercore-<model>.json` setup writes now has `host: 0.0.0.0`, `api_key: "0000"`, `turn_tail_check: true`.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-07-09.md</sub>
+
+**--all**
+- `tools/test_clean_script.py` — 7 passed: default tier, dry-run deletes nothing, source/data/run-configs survive, `--all` takes the venvs and `dist`, unknown flag errors, empty project is not a failure, `--scratch` removes tracked logs and keeps `serve/server.py` tracked
+  <sub>2026-10-10 · strata-chat-2026-10-10-12-04.md</sub>
+
+**--clean**
+- The docstring claimed `python3 setup.py --clean` uses it, which is false — `setup.py` has no `--clean` flag at all.
+  <sub>2026-10-10 · strata-chat-2026-10-10-12-04.md</sub>
+
+**--prompts**
+- `serve/server.py:637` and `:2013` set `prompts_path` to `prompt.json` in the repo root, overridable only by `--prompts` or the run config's `prompts` key.
+  <sub>2026-10-06 · strata-chat-2026-10-06-14-10.md</sub>
+
+**--tail-role-token**
+- Compared with Strata's running args, `_hypercore-q2_0.json` is missing `--vram-reserve-mib 512`, has `--pcie-frac 0.75` (the default) instead of the measured `0.00`, `--spec-min-p 0.80` instead of `0.90`, and no `--tail-role-token`.
+  <sub>2026-10-10 · strata-chat-2026-10-10-20-47.md</sub>
+
+**-dcmake_make_program**
+- Fix — `setup.py` now reads the generator the directory already has: `-DCMAKE_MAKE_PROGRAM` is only passed when the generator is actually Ninja.
+  <sub>2026-10-10 · strata-chat-2026-10-10-08-05.md</sub>
+
+**./ni_run-q2_0.sh**
+- The residual tokens are almost all bare `strata` — `tools/rename_hypercore.sh` only matched `strata-`, `strata_`, `STRATA_`, `strata::`, and `#include "strata/`, so bare words were missed: Hard functional mismatches (these are what break `./setup.sh` / `./ni_run-q2_0.sh`):
+  <sub>2026-10-10 · strata-chat-2026-10-10-05-20.md</sub>
+
+**.bb_cmake_configure.txt**
+- The genuine repo dirt is separate and not removable by `git clean`, because it's tracked: 27 scratch files at the root — `.review_.txt` (13), `.mcp_run_all.txt`, `.bb_cmake_configure.txt`, `_kimi_ab.py`, `mcp.yaml.orig`, `mcp.yaml.orig2`, `ni_hypercore-q2_0.json.bak`, `.full_suite_after.txt`.
+  <sub>2026-10-10 · strata-chat-2026-10-10-12-04.md</sub>
+
+**.py**
+- I widened it to `_.py` so the project's own tool catches one-off root scripts in future: Run configs (`_hypercore-q2_0.json`, `_run-q2_0.sh`) are not `.py`, so they're untouched.
+  <sub>2026-10-10 · strata-chat-2026-10-10-19-47.md</sub>
+
+**.pyenv/**
+- Default excludes for `venv/`, `.pyenv/`, `site-packages`, `__pycache__`, plus an `exclude` glob, and an explicit "N files skipped" line so partial coverage is visible.
+  <sub>2026-10-03 · strata-chat-2026-10-03-18-25.md</sub>
 
 **/health**
 - Live state: pid 793996 on port 8081, started from `run-q2_0.sh` with `--host 0.0.0.0 --turn-tail-check`; `/health` reports `api_key: true`, and a streamed request emitted `tail_check {"result":"continue","checks":1,"max_checks":3}`, so the turn-tail check is active.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-13-20.md</sub>
 
+**/home/ai-user0/strata/ni_strata-q2_0.json**
+- The text-only config exists here: `/home/ai-user0/Strata/ni_strata-q2_0.json` has no `"vision"` section, and `ni_run-q2_0.sh` starts it on the same port 8081.
+  <sub>2026-10-05 · strata-chat-2026-10-05-23-36.md</sub>
+
+**/v1/models**
+- The `/v1/models` endpoint works without an API key and returns 7639 bytes — that's a list of models.
+  <sub>2026-10-09 · strata-chat-2026-10-09-09-50.md</sub>
+
+**_hypercore_run-q2_0.sh**
+- Next step needs your go-ahead: stop the Strata instance (pid 178995) so the 4090 is free, then re-run `_hypercore_run-q2_0.sh` to see the full READY handshake — or, if you'd rather keep Strata up, I can run the calibration path first so the config gets a VRAM reserve.
+  <sub>2026-10-10 · strata-chat-2026-10-10-20-47.md</sub>
+
+**args**
+- The server reads the config at start, so the tab's own note says it plainly: "Saved to the run config; used from the next start of the model." Some keys have guards — `lazy_load` is refused if the config has a `vision` block — and `vram_reserve_mib` is written into the `args` list as `--vram-reserve-mib <n>`, not as a top-level key.
+  <sub>2026-10-07 · strata-chat-2026-10-07-09-31.md</sub>
+
+**assist_defaults**
+- `serve/assist.py` now has its own defaults, documented as deliberately independent of the run config: `converse()` takes `max_tokens=None` and falls back to `ASSIST_DEFAULTS`, and `serve/web/app.js` carries the same note at the call site so nobody wires the two together later.
+  <sub>2026-10-09 · strata-chat-2026-10-09-15-05.md</sub>
+
+**ast**
+- `best_model.py` reads setup.py's `MODELS` table with `ast` — no download, no GPU, and no duplicated numbers.
+  <sub>2026-10-10 · strata-chat-2026-10-10-08-05.md</sub>
+
+**before launching server**
+- Before launching the server, you must elevate your terminal environment's memlock ceiling: ulimit -l ulimit -l unlimited ./install.sh ------------------------------
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-16-40.md</sub>
+
+**bench/**
+- Scale of the unfinished rename: 170 `strata` references in `setup.py`, 45 in `src/`, 39 in `tests/` (32 files `#include "strata/…"` while the headers are in `include/hypercore/` — the C++ tests can't build), 138 in `bench/`, 58 in `serve/`, 73 in `tools/`, plus `README.md` deleted from HEAD.
+  <sub>2026-10-10 · strata-chat-2026-10-10-03-30.md</sub>
+
+**black_box/ni_run-q2_0.sh**
+- `black_box/ni_run-q2_0.sh` is byte-identical to the Strata one and runs the same server, so it now prints `[HYPER]` too.
+  <sub>2026-10-10 · strata-chat-2026-10-10-19-47.md</sub>
+
+**both symptoms trace**
+- Both symptoms trace to the supervisor refactor, not to a missing feature. `grep -cE "calibrat"` → 24 in both `~/Strata/setup.py` and `~/black_box/setup.py`, and the offer block is identical apart from the name: The prompt is emitted after Step 4 (engine + image encoder).
+  <sub>2026-10-10 · strata-chat-2026-10-10-20-47.md</sub>
+
+**build**
+- Build-directory consistency: OK. `build-hip`, `build-sycl`, `build-halo`, `build-cuda12` each have a matching configure line in their own page; the main path uses `build`, as `install.sh` and CI do.
+  <sub>2026-10-10 · strata-chat-2026-10-10-19-47.md</sub>
+
+**build-cuda-check/**
+- Verified: `build/`, `build-shared/`, `build-cuda/`, `build-cuda-check/` are all referenced (`install.sh`, `tools/backend_parity.py`, CI, `serve/server.py`).
+  <sub>2026-10-10 · strata-chat-2026-10-10-19-47.md</sub>
+
 **build/hypercore-worker**
 - `tools/calibrate.py hypercore-q2_0.json` exits with `WorkerUnreachable: worker exited during startup (1)`, and running `build/hypercore-worker` standalone gives `engine init failed (-5)` because the live server (pid 834276, port 8081) holds the GPU.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-13-20.md</sub>
 
-**calls means round1**
-- Hmm, calls==3 means: round1 (WORK) → not done → check round 2 (IGNORED) → text empty → `tail_is_done("")` False → then the guard `not (svc.turn_tail_check and checks < ...
-  <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md</sub>
+**clients claude code**
+- API clients (omp, Claude Code, OpenAI and Anthropic SDKs) see the API exactly as before" — `/home/ai-agent/Strata/docs/DETAILS.md:563-565`, and "The tools can only be used from the chat page itself (a request with another site's Origin or without a JSON content type is refused); if Strata is reachable from other devices, set an API key" (`:569-571`).
+  <sub>2026-10-04 · strata-chat-2026-10-04-06-37.md</sub>
+
+**cmakelists.txt**
+- It is not referenced by the build — no `third_party/llama.cpp` path appears in `CMakeLists.txt`, `setup.py`, or `setup.sh`.
+  <sub>2026-10-09 · strata-chat-2026-10-09-08-03.md</sub>
+
+**docs**
+- The running hub (pid 2856630) still holds the old env — `docs`, `scrape` and `terminal__process` only come live after `run-q2_0.sh` is restarted.
+  <sub>2026-10-05 · strata-chat-2026-10-05-20-19.md</sub>
+
+**engine/**
+- Engine binary. `engine/` still holds the stale `strata` / `strata-vision` binaries from Oct 6, while `setup.py` now looks for `engine/hypercore`.
+  <sub>2026-10-10 · strata-chat-2026-10-10-05-20.md</sub>
+
+**existing installs switch**
+- Existing installs switch to `--prefill auto` the next time START-HERE / setup.sh starts them.
+  <sub>2026-10-03 · strata-chat-2026-10-03-14-03.md</sub>
+
+**externally-managed-environment**
+- `python3 setup.py` (system interpreter) stops at Step 3 with `externally-managed-environment` (PEP 668).
+  <sub>2026-10-10 · strata-chat-2026-10-10-20-47.md</sub>
+
+**hypercore_tokenizer.py**
+- Stale references that will break at runtime. `setup.py:4810` calls `str(ROOT / "tools" / "strata_tokenizer.py")` — that file is now `hypercore_tokenizer.py`.
+  <sub>2026-10-10 · strata-chat-2026-10-10-03-30.md</sub>
+
+**line saving runs**
+- [14] the one-line fix: saving the API key now re-runs `loadMcp()` and `loadPrompts(true)`, so a fresh browser stops reporting "no tools".
+  <sub>2026-10-06 · strata-chat-2026-10-06-18-57.md</sub>
+
+**mcp.yaml**
+- Hub defaults (overridable in `mcp.yaml` or the run config's `"mcp"` block): `mcp.yaml` wins a shared name over the run config.
+  <sub>2026-10-04 · strata-chat-2026-10-04-05-16.md</sub>
+
+**ni_hypercore-q2_0.json**
+- Config filenames — rename `ni_strata-q2_0.json` → `ni_hypercore-q2_0.json` (which also means renaming the profile the live server PID 1552343 is reading), or leave the filenames and fix the run scripts to point at what exists?
+  <sub>2026-10-10 · strata-chat-2026-10-10-05-20.md</sub>
+
+**ni_run-q2_0.json**
+- Your live archive still uses `ni_run-q2_0.json` configs — do you want the personal variants kept as an example, or should the live system be migrated to the standard names?
+  <sub>2026-10-10 · strata-chat-2026-10-10-05-20.md</sub>
+
+**ni_strata-q2_0.json**
+- The UI is unauthorised. The server's key comes from `ni_strata-q2_0.json` → `"api_key": "0000"`, and `headers()` only sends it if you typed it into the API key field.
+  <sub>2026-10-09 · strata-chat-2026-10-09-12-32.md</sub>
+
+**pack/full**
+- `tools/bench_flood.py --model` explicitly refuses to run when `pack/full` is absent, and `serve/server.py:4421` defaults its tokenizer to `pack/full/tokenizer`.
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-11-52.md</sub>
+
+**portainer**
+- For reference, the API key in `strata-q2_0.json` is `api_key: "0000"`, and AnythingLLM is not running (`docker ps` shows only `portainer`), so the only web UI on this box is Strata on `:8081`.
+  <sub>2026-10-04 · strata-chat-2026-10-04-06-37.md</sub>
+
+**ready_s**
+- Starts detached with `setsid nohup sh <variant>_run-q2_0.sh &`, writes the PID to `~/.cache/strata/server.pid`, then polls `http://127.0.0.1:<port>/` until it answers, reporting progress every 10 s (a cold model load takes a minute or two, so `READY_S` defaults to 120).
+  <sub>2026-10-05 · strata-chat-2026-10-05-23-07.md</sub>
+
+**ruff**
+- `ruff` on `setup.py` is back at the HEAD baseline (55 issues, no new ones); the new files are clean.
+  <sub>2026-10-10 · strata-chat-2026-10-10-08-05.md</sub>
+
+**scripts _hypercore_run q2_0**
+- The run scripts (_hypercore_run-q2_0.sh, run_hypercore_production.sh) are generated/local artifacts — .gitignore ignores run-.sh and hypercore-.json but not run_hypercore_production.sh or _hypercore_run-q2_0.sh.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-08-01.md</sub>
+
+**serve/server.py**
+- Strata's backend reads `strata_mcp` (10 occurrences in `serve/server.py`) and its env vars are `STRATA_API_KEY`, `STRATA_ALLOWED_HOSTS`, etc.
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-11-52.md</sub>
 
 **settings.json**
 - That needs a machine where the CMake configure step is allowed: rebuild, then `./setup.sh --calibrate` to write the pcie-frac and adapt sweep into `settings.json`.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-14-18.md</sub>
 
+**tools/calibrate.py**
+- "Tune" is not a separate subsystem: it is a measurement harness (`tools/calibrate.py`) that writes three of those CLI flags into the run config.
+  <sub>2026-10-09 · strata-chat-2026-10-09-08-03.md</sub>
+
 **turn_tail_checks**
 - A yes/confirmation ends the turn; a no, an unanswered question, or more work keeps it open and the model continues — up to `turn_tail_checks` (default 3, capped 10) per turn.
-  <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md</sub>
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md · also in hypercore-chat-2026-10-11-08-01.md</sub>
+
+**universal home user0**
+- [universal] /home/ai-user0/Strata/docs/MODELS.md … Files another model shares are not downloaded again (the Coder uses the original's shard 2 and vision encoder).
+  <sub>2026-10-05 · strata-chat-2026-10-05-23-36.md</sub>
+
+**vision.cuda_device**
+- Your options right now: `./setup.sh --vision cpu` (encoder on CPU, works — verified), or set `vision.cuda_device` to a spare card, or stop the Strata instance (pid 178995) so the 4090 is free.
+  <sub>2026-10-10 · strata-chat-2026-10-10-20-47.md</sub>
 
 **window.hypercore_api_key**
 - A server started with a key now injects `window.HYPERCORE_API_KEY` into the page it serves, so the chat UI works without typing the key into Settings (`serve/test_server.py::WebApp` covers it).
   <sub>2026-10-11 · hypercore-chat-2026-10-11-13-20.md</sub>
+
+**yi_run-q2_0.sh**
+- `yi_run-q2_0.sh` doesn't exist yet. The script handles that cleanly (reports it, starts nothing).
+  <sub>2026-10-05 · strata-chat-2026-10-05-23-07.md</sub>
 
 ## Decisions taken
 
 what was chosen, and why, oldest first
 
 
+**socket sanitation supervisor** · 2 chats
+- Socket sanitation: supervisor evicts stale socket, pid-private paths, cleanup, tests added to install.sh.
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-18-54.md</sub>
+- The socket issue is fixed and now covered by install.sh.
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-18-54.md</sub>
+
+**./run-q2_0.sh**
+- There is no `./run-q2_0.sh` in the fork — the script setup.py generates is `run-<model>.sh`, but this checkout has an underscore-prefixed, untracked copy: `_hypercore_run-q2_0.sh` (config `_hypercore-q2_0.json`, port 8080).
+  <sub>2026-10-10 · strata-chat-2026-10-10-20-47.md</sub>
+
+**.gitignore**
+- Also added `_run-.sh` / `_hypercore-.json` to `.gitignore` — those are machine-local run configs like `run-.sh`, including your `_run-q2_0.sh` with `--host 0.0.0.0`
+  <sub>2026-10-10 · strata-chat-2026-10-10-12-04.md</sub>
+
+**api_key**
+- The "FREE" claim — qualified it and added the missing Assist bullet: I verified those details against the code rather than guessing: `serve/assist.py` reads `API_KEY`/`NVIDIA_API_KEY` and raises if absent; `serve/assist_fast_models.json` pins 14 models with `max_lag_s: 1.0`; `serve/web/app.js` has the "Show every model" toggle and the "Check lag" probe.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-08-31.md</sub>
+
 **hypercore-q2_0.json**
 - What survives unchanged: the gate behaviour, the per-engine decisions, the stale `HYPERCORE_ROUTE_TAIL_SKIP=0` in `hypercore-q2_0.json` (confirmed present, and `grep -c "tail skip is on"` on the current log returns 0, so it is still in effect despite the 15:38 run preferring the default), and the recommendation to raise `SWEEP_ROUNDS` or `MIN_GAIN` in `tools/calibrate.py`.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-15-51.md</sub>
 
+**install.sh**
+- This is covered by: Result: I also added `serve.test_socket_hygiene` to `install.sh`’s supervisor stage so the boundary test runs automatically.
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-18-54.md</sub>
+
+**ni_run-q2_0.sh**
+- Naming decision. `ni_run-q2_0.sh` is gone by design (T3 replaced it with `restart.sh` + `hypercore_<model>.sh`).
+  <sub>2026-10-10 · strata-chat-2026-10-10-05-20.md</sub>
+
 **setup.py**
 - What changed in `setup.py` `SETUP_KEYS` now includes `turn_tail_check`, so a setup rerun does not drop it.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-13-20.md</sub>
+
+**setup_keys**
+- `turn_tail_check` was added to `SETUP_KEYS` so a rerun doesn't drop it.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-07-09.md</sub>
+
+## Measured on this machine
+
+numbers actually measured, not estimated
+
+
+**hypercore-q2_0.json**
+- `hypercore-q2_0.json` was written with `--vram-reserve-mib 700`, from: The BF16 mmproj alone is 907,524,736 B = 865 MiB of tensors, plus the encoder's own CUDA context and its work buffers.
+  <sub>2026-10-10 · strata-chat-2026-10-10-20-47.md</sub>
+
+**ranking puts fully**
+- Ranking puts a fully resident pack above one that streams its experts from the SSD, which is the distinction setup.py itself documents (UD-Q4_K_XL measures 7–8.5 tokens/s on a 64 GB PC).
+  <sub>2026-10-10 · strata-chat-2026-10-10-08-05.md</sub>
+
+**setup calibrate works**
+- `./setup.sh --calibrate` works — the repo's own state record shows a real run on this box (`--pcie-frac 0.75, --spec-min-p 0.30, --pool-workers 12, 2362 tok/s`).
+  <sub>2026-10-10 · strata-chat-2026-10-10-20-47.md</sub>
+
+**strata_models**
+- Consider the model setup.py recommends. `strata_models` says Coder IQ1_M at 128K is the fastest that fits here (23.4 GB arena → fully resident), while Q2_0 "fits in the low-RAM mode (slower: the GPU holds part of the experts)".
+  <sub>2026-10-07 · strata-chat-2026-10-07-09-31.md</sub>
+
+## Gotchas
+
+things that bit once and will bite again
+
+
+**/home/ai-user0/strata**
+- Do not move `/home/ai-user0/Strata`. It is the live system (PID 1552343, port 8081, HTTP 200), and `ni_run-q2_0.sh` hardcodes `cd "/home/ai-user0/Strata"`.
+  <sub>2026-10-10 · strata-chat-2026-10-10-05-20.md</sub>
+
+**api_key**
+- The interesting configuration is in `"args"`, which the About tab never shows: Plus `port`, `host`, `api_key`, `gpu`, `gpus_asked`, `lib_dirs` — deliberately left out of the editor ("the network and security keys … are kept as it is").
+  <sub>2026-10-07 · strata-chat-2026-10-07-09-31.md</sub>
+
+**boundary.yml**
+- `boundary.yml` has never run on an actual GitHub runner — it needs `DAYTONA_API_KEY` as a secret.
+  <sub>unknown · end_hypercore.txt</sub>
+
+**daytona_api_key**
+- One caveat: the CI cross-toolchain stage reports SKIP unless `DAYTONA_API_KEY` is set on the repo.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-08-01.md</sub>
+
+## Still open
+
+not done, deferred, or waiting on a decision
+
+
+**daytona_api_key**
+- Not yet true, and I won't claim it is: the workflow has never run — it needs `DAYTONA_API_KEY` as a secret and a runner with cmake.
+  <sub>2026-10-10 · strata-chat-2026-10-10-00-02.md</sub>

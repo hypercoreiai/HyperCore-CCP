@@ -13,9 +13,10 @@ import sys
 import os
 from pathlib import Path
 
-# The transcripts live outside the repository. Override with CHAT_SOURCE or --source.
-DEFAULT_SOURCE = Path("/home/ai-user0/black_box_chats")
-CHATS = Path(os.environ.get("CHAT_SOURCE") or DEFAULT_SOURCE)
+# Transcript folders, read in the order given. Override with CHAT_SOURCE (comma
+# separated) or --source.
+DEFAULT_SOURCES = (Path("/home/ai-user0/black_box_chats"), Path("/home/ai-user0/Strata_chats"))
+SOURCES = [Path(p) for p in (os.environ.get("CHAT_SOURCE") or "").split(",") if p.strip()] or list(DEFAULT_SOURCES)
 
 # candidate topics -> the words that show up when a chat is about them
 KEYS = {
@@ -57,7 +58,7 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0, help="only the first N files")
     a = ap.parse_args()
 
-    files = sorted(p for p in CHATS.iterdir() if p.is_file())
+    files = sorted(p for folder in SOURCES if folder.is_dir() for p in folder.iterdir() if p.is_file())
     if a.limit:
         files = files[:a.limit]
 
