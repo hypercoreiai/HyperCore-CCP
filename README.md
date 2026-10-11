@@ -41,7 +41,8 @@ you, hand it [docs/AI_SETUP.md](docs/AI_SETUP.md).
 Measured numbers for your card: [docs/DETAILS.md](docs/DETAILS.md#speed-measured). Older
 and experimental hardware: [docs/OLDER_GPUS.md](docs/OLDER_GPUS.md).
 
-#IMPROVED WEB-UI
+## IMPROVED WEB-UI With FREE Frontier Model Assist Page
+
 ![## The web app](docs/media/Assist.png)
 The server serves its own front end: open the page the run script opens (the same port as
 the API), and `#monitor` for the dashboard. There is no separate app and nothing from a
