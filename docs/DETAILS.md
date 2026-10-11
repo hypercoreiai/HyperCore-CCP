@@ -628,7 +628,8 @@ print(r.choices[0].message.content)
   Monitor can say whether the check is on and whether the question has been replaced.
 - **What the system prompt tells the model about its resources (prompt.json v6).** `system_prompt` has a
   `resources` section naming the two things the model is expected to reach: the topic tree under
-  `data/history/` (built by `tools/build_history.py` from the chat transcripts; `topics/<topic>.md` for the
+  `data/history/` (built by `tools/build_history.py` from the transcripts in `~/black_box_chats`, overridable
+  with `CHAT_SOURCE` or `--source`; `topics/<topic>.md` for the
   dated entries, `notes/<topic>.md` for the current state, `index.json` for the machine-readable version),
   and the Assist tools (`assist__status`, `assist__models`, `assist__chat`) that reach an external NVIDIA
   endpoint. The rule written into the prompt is: check history before re-deriving a fact, and use Assist only

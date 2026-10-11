@@ -132,7 +132,7 @@ htmlcov/
 # Checkpoint helper: local tooling, not project source.
 /cp_blackbox.sh
 
-# The chat history index is built locally by tools/build_history.py from the
-# transcripts under data/history/chats; it carries live API keys, so it is not
-# committed.
+# The chat history index is generated locally by tools/build_history.py from the
+# transcripts in ~/black_box_chats. It is not committed: the tree on this machine was
+# built before the scrubbing in that builder and still carries live keys.
 data/history/

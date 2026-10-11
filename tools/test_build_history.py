@@ -142,9 +142,79 @@ class Output(unittest.TestCase):
         if not index.is_file():
             self.skipTest("data/history has not been built")
         import json
-        sources = json.loads(index.read_text(encoding="utf-8"))["sources"]
-        for name in sources:
-            self.assertTrue((BH.CHATS / name).is_file(), name)
+        doc = json.loads(index.read_text(encoding="utf-8"))
+        if "source" not in doc:      # built before the builder recorded its source
+            self.skipTest("index.json does not say which folder it was built from")
+        built_from = Path(doc["source"])
+        for name in doc["sources"]:
+            self.assertTrue((built_from / name).is_file(), name)
+
+
+class Scrubbing(unittest.TestCase):
+    """A history that is shared with the repository carries no personal information."""
+
+    def test_keys_tokens_and_addresses_are_replaced(self):
+        s = ("the remote `origin` keeps the token ghp_TESTTOKEN0123456789abcdef "
+            "and the account test@example.com, with the Daytona key "
+            "dtn_TESTDAYTONA0123456789abcdef and "
+            "the NVIDIA key nvapi-TESTNVIDIAKEY0123456789abcdef "
+            "and the handle @testuser")
+        out = BH.scrub(s)
+        for secret in ("ghp_", "dtn_", "nvapi-", "@gmail.com", "@testuser"):
+            self.assertNotIn(secret, out, secret)
+        for marker in ("[key]", "[email]", "[handle]"):
+            self.assertIn(marker, out, marker)
+
+    def test_fastapi_decorators_are_not_read_as_addresses(self):
+        for code in ("n@app.get returns the status", "n@app.on startup runs the hub",
+                     "the handler @app.post writes the log"):
+            self.assertEqual(BH.scrub(code), code, code)
+
+    def test_clean_scrubs_as_well_as_tidying(self):
+        self.assertIn("[key]", BH.clean("- the remote `origin` keeps ghp_TESTTOKEN0123456789abcdef"))
+
+    def test_a_sentence_from_a_transcript_survives_scrubbed(self):
+        text = ("## You\nrun the checkpoint and push it\n\n"
+                "## Assistant\n- the remote `origin` keeps the token "
+                "ghp_TESTTOKEN0123456789abcdef for the account test@example.com\n")
+        found = BH.sentences(text)
+        self.assertTrue(found, "the fixture sentence should be kept")
+        for sent in found:
+            self.assertNotIn("ghp_", sent, sent)
+            self.assertNotIn("@gmail.com", sent, sent)
+
+
+class Source(unittest.TestCase):
+    """The transcripts are outside the repository and the path is overridable."""
+
+    def test_the_default_is_the_transcripts_folder(self):
+        self.assertEqual(str(BH.DEFAULT_SOURCE), "/home/ai-user0/black_box_chats")
+        self.assertEqual(BH.CHATS, BH.DEFAULT_SOURCE)
+
+    def test_a_source_and_an_out_dir_given_on_the_command_line_are_used(self):
+        import tempfile
+        fixture = ("# chat\n\n## You\nrun the checkpoint and push it\n\n"
+                   "## Assistant\n- the remote `origin` keeps the token "
+                   "ghp_TESTTOKEN0123456789abcdef for test@example.com\n")
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as out:
+            Path(src, "2026-10-11-chat.md").write_text(fixture * 3, encoding="utf-8")
+            saved, sys.argv = sys.argv, ["build_history.py", "--source", src, "--out", out]
+            try:
+                code = BH.main()
+            finally:
+                sys.argv, BH.CHATS, BH.HIST = saved, BH.DEFAULT_SOURCE, BH.HIST
+            self.assertEqual(code, 0, "the builder found the transcripts it was given")
+            written = [p for p in Path(out).rglob("*") if p.is_file()]
+            self.assertTrue(written, "nothing was written")
+            for p in written:
+                self.assertNotIn("ghp_", p.read_text(encoding="utf-8"), p.name)
+
+    def test_a_missing_source_reports_and_returns_non_zero(self):
+        saved, BH.CHATS, sys.argv = BH.CHATS, Path("/no/such/transcript/folder"), ["build_history.py"]
+        try:
+            self.assertEqual(BH.main(), 1)
+        finally:
+            sys.argv, BH.CHATS = saved, BH.DEFAULT_SOURCE
 
 
 if __name__ == "__main__":

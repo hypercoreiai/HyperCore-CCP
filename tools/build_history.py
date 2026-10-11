@@ -11,6 +11,7 @@ Two views of the same extraction:
 
     python3 tools/build_history.py            # rebuild
     python3 tools/build_history.py --topics   # just the topic counts
+    python3 tools/build_history.py --source /path/to/transcripts
 
 Re-running is safe: the transcripts are the source of truth and the files are regenerated from
 them. A hand-written note in topics/<topic>.notes.md is left alone.
@@ -19,13 +20,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
-CHATS = Path("/home/ai-user0/Strata_chats")
+# The transcripts live outside the repository. Override with CHAT_SOURCE or --source.
+DEFAULT_SOURCE = Path("/home/ai-user0/black_box_chats")
+CHATS = Path(os.environ.get("CHAT_SOURCE") or DEFAULT_SOURCE)
 HIST = Path(__file__).resolve().parents[1] / "data" / "history"
 
 # ---------------------------------------------------------------- the categories
@@ -229,12 +233,29 @@ def sentences(text: str) -> list[str]:
     return out
 
 
+# Nothing personal belongs in a history that is shared with the repository: live API
+# keys, account addresses and handles are replaced with a marker, so a rebuilt history
+# can be committed without leaking a secret or a person.
+KEY = re.compile(r"\b(?:ghp|dtn|nvapi|sk|AIza)[A-Za-z0-9_-]{10,}\b")
+EMAIL = re.compile(r"(?<![\w.])[A-Za-z0-9][A-Za-z0-9_.-]{1,40}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+){1,3}")
+HANDLE = re.compile(r"(?<=\s)@[A-Za-z0-9_]{3,}(?![\w.])")
+
+
+def scrub(s: str) -> str:
+    """Replace keys, addresses and handles with a marker. Keys go first so a key inside
+    an address is not read as part of the address."""
+    s = KEY.sub("[key]", s)
+    s = EMAIL.sub("[email]", s)
+    s = HANDLE.sub("[handle]", s)
+    return s
+
+
 def clean(s: str) -> str:
     """Drop the markdown emphasis and the bullet lead so a sentence reads as a sentence."""
     s = re.sub(r"\*+", "", s)
     s = re.sub(r"^[-*\s]+", "", s)
     s = re.sub(r"\s{2,}", " ", s).strip()
-    return s
+    return scrub(s)
 
 
 STATE_OK = re.compile(r"(?i)\b(is|are|does|do|works|fails|refuses|keeps|means|requires|allows|prevents|"
@@ -365,9 +386,19 @@ SECTIONS = {
 
 
 def main() -> int:
+    global CHATS, HIST
     ap = argparse.ArgumentParser()
     ap.add_argument("--topics", action="store_true", help="only print the topic counts")
+    ap.add_argument("--source", default=None, help=f"transcript folder (default {DEFAULT_SOURCE})")
+    ap.add_argument("--out", default=None, help=f"where to write (default {HIST})")
     a = ap.parse_args()
+    if a.source:
+        CHATS = Path(a.source)
+    if a.out:
+        HIST = Path(a.out)
+    if not CHATS.is_dir():
+        print(f"no transcripts at {CHATS}", file=sys.stderr)
+        return 1
 
     data = extract()
     entries, sources = data["entries"], data["sources"]
@@ -420,6 +451,7 @@ def main() -> int:
 
     (HIST / "index.json").write_text(json.dumps({
         "built": str(date.today()), "transcripts": len(sources),
+        "source": str(CHATS),
         "categories": {t: TOPICS[t][0] for t in TOPICS},
         "topics": {t: len(v) for t, v in sorted(entries.items())},
         "sources": sources,

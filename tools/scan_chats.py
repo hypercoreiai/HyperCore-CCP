@@ -10,9 +10,12 @@ import argparse
 import collections
 import re
 import sys
+import os
 from pathlib import Path
 
-CHATS = Path("/home/ai-user0/Strata_chats")
+# The transcripts live outside the repository. Override with CHAT_SOURCE or --source.
+DEFAULT_SOURCE = Path("/home/ai-user0/black_box_chats")
+CHATS = Path(os.environ.get("CHAT_SOURCE") or DEFAULT_SOURCE)
 
 # candidate topics -> the words that show up when a chat is about them
 KEYS = {
