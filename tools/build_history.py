@@ -420,7 +420,7 @@ def main() -> int:
                 "grouped by the thing they are about, newest statement first.\n"]
         note = notes_dir / f"{topic}.md"
         if note.is_file():
-            text = note.read_text(encoding="utf-8").strip()
+            text = scrub(note.read_text(encoding="utf-8").strip())
             text = re.sub(r"^# .*\n+", "", text)          # the topic file already has the heading
             if text:
                 body.append("\n## Current state\n\nMaintained by hand; the builder keeps it in place.\n\n"

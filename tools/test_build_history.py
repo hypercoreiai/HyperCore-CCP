@@ -121,11 +121,19 @@ class Noise(unittest.TestCase):
 class Output(unittest.TestCase):
     """The files that are written are the ones the README describes."""
 
-    def test_topic_files_exist_for_every_category(self):
+    def test_only_real_categories_get_a_topic_file(self):
         topics = ROOT / "data" / "history" / "topics"
         if not topics.is_dir():          # never built on this machine: nothing to check
             self.skipTest("data/history has not been built")
-        for topic in BH.TOPICS:
+        for f in topics.glob("*.md"):
+            self.assertIn(f.stem, BH.TOPICS, f.name)   # no invented category
+        index = ROOT / "data" / "history" / "index.json"
+        if not index.is_file():
+            self.skipTest("index.json is missing")
+        import json
+        # A category with no entries gets no file; one with entries must have one.
+        for topic, count in json.loads(index.read_text(encoding="utf-8"))["topics"].items():
+            self.assertGreater(count, 0, topic)
             self.assertTrue((topics / f"{topic}.md").is_file(), topic)
 
     def test_a_topic_file_states_the_current_state_before_the_log(self):
@@ -135,7 +143,9 @@ class Output(unittest.TestCase):
         for f in sorted(topics.glob("*.md")):
             text = f.read_text(encoding="utf-8")
             self.assertIn("# ", text.splitlines()[0], f.name)
-            self.assertLess(text.find("## Current state"), text.find("## What is true now"), f.name)
+            now, log = text.find("## Current state"), text.find("## What is true now")
+            if now >= 0 and log >= 0:      # a section with no entries is simply absent
+                self.assertLess(now, log, f.name)
 
     def test_no_entry_is_attributed_to_a_missing_transcript(self):
         index = ROOT / "data" / "history" / "index.json"
@@ -208,6 +218,31 @@ class Source(unittest.TestCase):
             self.assertTrue(written, "nothing was written")
             for p in written:
                 self.assertNotIn("ghp_", p.read_text(encoding="utf-8"), p.name)
+
+    def test_a_hand_written_note_is_inserted_scrubbed(self):
+        import tempfile
+        fixture = ("# chat\n\n## You\nrun the checkpoint and push it\n\n"
+                   "## Assistant\n- the remote `origin` keeps the token "
+                   "ghp_TESTTOKEN0123456789abcdef for test@example.com\n")
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as out:
+            Path(src, "2026-10-11-chat.md").write_text(fixture * 3, encoding="utf-8")
+            notes = Path(out, "notes")
+            notes.mkdir(parents=True)
+            for topic in BH.TOPICS:
+                (notes / f"{topic}.md").write_text(
+                    f"# {topic}\n\nthe account is test@example.com and the key is "
+                    "ghp_TESTTOKEN0123456789abcdef\n", encoding="utf-8")
+            saved, sys.argv = sys.argv, ["build_history.py", "--source", src, "--out", out]
+            try:
+                code = BH.main()
+            finally:
+                sys.argv, BH.CHATS, BH.HIST = saved, BH.DEFAULT_SOURCE, BH.HIST
+            self.assertEqual(code, 0)
+            for f in Path(out, "topics").glob("*.md"):
+                text = f.read_text(encoding="utf-8")
+                self.assertIn("## Current state", text, f.name)   # the note is kept
+                self.assertNotIn("ghp_TESTTOKEN", text, f.name)   # but scrubbed
+                self.assertNotIn("test@example.com", text, f.name)
 
     def test_a_missing_source_reports_and_returns_non_zero(self):
         saved, BH.CHATS, sys.argv = BH.CHATS, Path("/no/such/transcript/folder"), ["build_history.py"]
