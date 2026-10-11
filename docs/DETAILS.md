@@ -1323,6 +1323,11 @@ remains the default. This option is text-only: a vision configuration with lazy 
 and **404** for an unknown model. Existing `/load` and `/unload` behavior is preserved. `/api/health` aliases
 `/health`; `/v1/status` exposes `loaded` and `auto_load`. The unloaded model remains discoverable.
 
+`POST /v1/shutdown` (#641, the banner's Shut Down button) asks the server to stop: it sets the same flag
+Ctrl+C and SIGTERM use, and `main()` then closes the HTTP listener, the model engine, the image encoder and
+the MCP servers in that order. It answers immediately with what is being closed; the process exits when the
+engine has freed its memory.
+
 Unloading and shutdown close the native engine's stdin after sending `QUIT`, allowing Windows' detached
 stdin reader to see EOF. Cleanup waits for process exit before releasing handles; if forced shutdown still
 times out, the server keeps ownership and reports an error rather than claiming the model was unloaded.

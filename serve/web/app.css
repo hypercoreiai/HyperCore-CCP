@@ -13,6 +13,16 @@ main { flex: 1; min-height: 0; display: flex; }
 .st-header .st-tabs { margin-left: var(--st-s-4); }
 #drawer-close .st-icon { transform: rotate(-90deg); }
 
+/* Shut Down: the one red control in the banner. It is deliberately two clicks - the
+   first arms it, the second stops the server - so a stray click cannot end a model that
+   is mid-request. Colours come from the kit's danger tokens, so it reads red in both
+   themes without a theme-specific rule. */
+.st-header .st-btn--danger { height: 32px; padding: 0 12px; border-radius: var(--st-r-pill);
+  background: var(--st-danger-tint); color: var(--st-danger-text); font-size: var(--st-fs-sm); font-weight: 700; }
+.st-header .st-btn--danger:hover { background: var(--st-danger); color: #fff; }
+.st-header .st-btn--danger[data-armed] { background: var(--st-danger); color: #fff; }
+.st-header .st-btn--danger[data-done] { background: var(--st-surface-2); color: var(--st-ink-muted); }
+
 /* ---------------------------------------------------------------- chat */
 .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .chat { max-width: 860px; margin: 0 auto; padding: var(--st-s-8) var(--st-s-6) var(--st-s-6); display: flex;
@@ -212,6 +222,7 @@ main { flex: 1; min-height: 0; display: flex; }
   .st-tab { padding: 0 10px; }
   .st-tab .st-icon { display: none; }
   #pill-text { display: none; }
+  #shutdown-text { display: none; }
   .chat { padding: var(--st-s-5) var(--st-s-4); }
   .composer-wrap { padding: 0 var(--st-s-3) var(--st-s-3); }
   .monitor, .about { padding: var(--st-s-4); }

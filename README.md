@@ -64,6 +64,12 @@ CDN — `serve/web/` is one page, its styles, an inline SVG sprite and the Outfi
   but it does need a key: put `ENDPOINT` and `API_KEY` in a `.env` beside the project.
   The model list is the set of models on that endpoint that answered a lag probe inside
   one second; "Show every model" lists the rest, and "Check lag" re-times them.
+- **Shut Down** — the red button at the right end of the banner. It asks the server to
+  stop, and the server then closes every process it started: the HTTP listener, the model
+  engine (asked to free its memory before it is terminated), the image encoder and the
+  MCP servers. It is two clicks so a stray click cannot end a model mid-request, and it
+  runs the same code path as Ctrl+C and SIGTERM, in plain Python, so it behaves the same
+  on Windows and Linux.
 
 What the front end reads, and what changed with it:
 

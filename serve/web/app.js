@@ -71,6 +71,53 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
   if (!saved) setTheme(e.matches ? "dark" : "light", false);
 });
 
+// ------------------------------------------------------------------ shut down
+// The red button in the banner. Two clicks on purpose: the first arms it, the second
+// stops the server, so a stray click cannot end a model that is mid-request.
+// POST /v1/shutdown only asks; main() then runs the same closers Ctrl+C and SIGTERM
+// run, so the engine is told to free its memory before anything is killed. That path is
+// plain Python - no signals, no process scanning - so it behaves the same on Windows.
+let shuttingDown = false, armed = false;
+const SHUTDOWN_TITLE = "Shut down HyperCore: stop the model, the MCP servers and the image encoder, then close this server";
+function disarmShutdown() {
+  const btn = $("shutdown-btn");
+  armed = false;
+  delete btn.dataset.armed;
+  btn.disabled = false;
+  $("shutdown-text").textContent = "Shut Down";
+  btn.title = SHUTDOWN_TITLE;
+}
+$("shutdown-btn").onclick = async () => {
+  const btn = $("shutdown-btn");
+  if (shuttingDown) return;
+  if (!armed) {
+    armed = true;
+    btn.dataset.armed = "1";
+    $("shutdown-text").textContent = "Confirm";
+    btn.title = "Click again to shut down HyperCore";
+    setTimeout(() => { if (!shuttingDown) disarmShutdown(); }, 8000);   // let it go back on its own
+    return;
+  }
+  shuttingDown = true;
+  delete btn.dataset.armed;
+  btn.disabled = true;
+  $("shutdown-text").textContent = "Shutting down";
+  setPill("idle", "Shutting down");
+  try {
+    const r = await fetch("v1/shutdown", { method: "POST", headers: headers(true), body: "{}" });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error?.message || `HTTP ${r.status}`);
+    toast("success", "Shutting down", "Closing " + (body.closing || []).join(", ") + ".", 6000);
+    setPill("idle", "Stopped");
+    document.querySelectorAll(".st-tab, .st-composer .st-btn").forEach(b => b.disabled = true);
+    $("input").disabled = true;
+  } catch (e) {
+    shuttingDown = false;
+    disarmShutdown();
+    toast("error", "Could not shut down", String(e.message || e));
+  }
+};
+
 let tab = "chat";
 function showTab(name) {
   tab = ["chat", "monitor", "about", "assist"].includes(name) ? name : "chat";
@@ -178,7 +225,7 @@ async function poll() {
     if (++metricsFailures === 3) setPill("error", "Server not reachable");
   }
   if (tab === "monitor" && ++mcpTick % 10 === 0) { loadMcp(); loadAssistMonitor(); }       // server states change rarely: every 10 s
-  setTimeout(poll, 1000);
+  if (!shuttingDown) setTimeout(poll, 1000);   // after Shut Down the server is gone: stop asking it
 }
 
 function setPill(state, text) {

@@ -1608,6 +1608,10 @@ class Service:
         self.turn_tail_checks = TAIL_CHECK_MAX
         self.turn_tail_prompt = TAIL_CHECK_PROMPT
         self.anthropic_think_unasked = True               # #278: "anthropic_thinking": "on_request" -> False
+        # #641: the banner's Shut Down button. The request only sets this; main()'s wait loop
+        # sees it and runs the same closers Ctrl+C and SIGTERM run, so a shutdown from the
+        # page and a shutdown from the terminal end up identical on Windows and Linux.
+        self.stop_requested = threading.Event()
         self.stop_ids = set(tokenizer.encode(IM_END, parse_special=True) +
                             tokenizer.encode("<|endoftext|>", parse_special=True))
 
@@ -3824,6 +3828,18 @@ def make_handler(svc: Service):
                         result = "loaded"
                     self._json(200, {"status": result, **svc.v1_status()})
                     return
+                if path == "/v1/shutdown":               # #641: the banner's Shut Down button
+                    if not self._own_page("the server can be shut down"):
+                        return
+                    running = [n for n, p in (("the model engine", getattr(svc.engine, "proc", None)),
+                                             ("the image encoder", svc.vision),
+                                             ("the MCP servers", getattr(svc, "mcp", None))) if p]
+                    svc.stop_requested.set()             # main() closes them, in order, and exits
+                    self._json(200, {"status": "shutting_down", "model": svc.model,
+                                     "closing": running or ["the HTTP server"],
+                                     "note": "the engine is asked to free its memory first, which can "
+                                             "take a few seconds; nothing is killed until it answers"})
+                    return
                 if path == "/v1/vram":                       # #533: give VRAM back to other programs, or take it
                     if not self._own_page("the VRAM reserve can be changed"):
                         return
@@ -4481,6 +4497,32 @@ def allowed_hosts_of(value, env: str = "") -> list[str]:
 
 
 
+def close_everything(svc: Service, httpd) -> list[str]:
+    """#641: stop every process this server started, in the order that lets each one free
+    its own memory before the next is stopped. Ctrl+C, SIGTERM and the web page's Shut
+    Down button all come through here, so a shutdown from the page and one from the
+    terminal are the same code path - and it is plain Python, with no signals and no
+    process scanning, so it behaves identically on Windows and Linux.
+
+    Returns the names it closed, for the log and the tests."""
+    closers = [("the HTTP server", httpd.shutdown),
+               ("the model engine", getattr(svc.engine, "close", None)),
+               ("the image encoder", svc.vision.shutdown if svc.vision else None),
+               ("the MCP servers", svc.mcp.close if getattr(svc, "mcp", None) is not None else None)]
+    closed: list[str] = []
+    for name, close in closers:
+        if close is None:
+            continue
+        try:
+            close()
+        except KeyboardInterrupt:                   # a second Ctrl+C: don't wait for the engine to free its memory
+            proc = getattr(svc.engine, "proc", None)
+            if proc:
+                proc.kill()
+        closed.append(name)
+    return closed
+
+
 def serve(svc: Service, host="127.0.0.1", port=8095) -> ThreadingHTTPServer:
     svc.host_names = host_names_for(host, svc.allowed_hosts, svc.trusted_origins)
     svc.start_telemetry()
@@ -5072,20 +5114,19 @@ def main() -> int:
         signal.signal(signal.SIGTERM, on_sigterm)
     except (ValueError, OSError, AttributeError):         # not the main thread
         pass
-    try:
-        while True:
-            time.sleep(1)                               # Windows never delivers Ctrl+C to an untimed Event.wait()
-    except KeyboardInterrupt:
-        print("\n[hypercore] stopping (Ctrl+C again to end the engine at once) ...", flush=True)
-        closers = [httpd.shutdown, getattr(engine, "close", None), vision.shutdown if vision else None,
-                   hub.close if hub is not None else None]
-        for close in filter(None, closers):
-            try:
-                close()
-            except KeyboardInterrupt:                   # a second Ctrl+C: don't wait for the engine to free its memory
-                if getattr(engine, "proc", None):
-                    engine.proc.kill()
+    def stop_everything(reason: str) -> None:
+        """Close every process this server started, then say so. Used by Ctrl+C, SIGTERM
+        and the banner's Shut Down button, so all three end the same way (#641)."""
+        print(f"\n[hypercore] stopping ({reason}) ...", flush=True)
+        close_everything(svc, httpd)
         print("[hypercore] stopped", flush=True)
+
+    try:
+        while not svc.stop_requested.is_set():
+            time.sleep(1)                               # Windows never delivers Ctrl+C to an untimed Event.wait()
+        stop_everything("asked from the web page")
+    except KeyboardInterrupt:
+        stop_everything("Ctrl+C")
     return 0
 
 
