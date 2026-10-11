@@ -41,9 +41,10 @@ you, hand it [docs/AI_SETUP.md](docs/AI_SETUP.md).
 Measured numbers for your card: [docs/DETAILS.md](docs/DETAILS.md#speed-measured). Older
 and experimental hardware: [docs/OLDER_GPUS.md](docs/OLDER_GPUS.md).
 
-## IMPROVED WEB-UI With FREE Frontier Model Assist Page
+## The web app: chat, monitor, and a free frontier-model Assist page
 
-![## The web app](docs/media/Assist.png)
+![The HyperCore web app](docs/media/Assist.png)
+
 The server serves its own front end: open the page the run script opens (the same port as
 the API), and `#monitor` for the dashboard. There is no separate app and nothing from a
 CDN — `serve/web/` is one page, its styles, an inline SVG sprite and the Outfit font
@@ -58,6 +59,11 @@ CDN — `serve/web/` is one page, its styles, an inline SVG sprite and the Outfi
 - **Monitor** — context fill, experts in VRAM, system RAM, GPU temperature, the recent
   requests (prompt, reused, output, tok/s, VRAM hit rate, duration), the conversation
   cache, the MCP switches and the external-assistant log.
+- **Assist** — a second chat that answers through an OpenAI-compatible NVIDIA endpoint,
+  so a frontier model can be used alongside the local one. The endpoint is free to call,
+  but it does need a key: put `ENDPOINT` and `API_KEY` in a `.env` beside the project.
+  The model list is the set of models on that endpoint that answered a lag probe inside
+  one second; "Show every model" lists the rest, and "Check lag" re-times them.
 
 What the front end reads, and what changed with it:
 
