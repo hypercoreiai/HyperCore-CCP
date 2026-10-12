@@ -1211,6 +1211,23 @@ int adapt_lag() {
     return v;
 }
 
+/// HYPERCORE_ADAPT_OVERLAP=1: the adaptive tier's copies land while the next decode window already runs.  The window
+/// sees the swapped-in experts as resident from its first layer, exactly as after the plain wait (so the tokens are
+/// the same ones); only when the bytes arrive changes.  The copies go in layer order and the verify window holds a
+/// layer's plan back until that layer's copies have landed (AdaptGate in hypercore/core/verify.hpp).  On for CUDA;
+/// =0 turns it off.
+bool adapt_overlap() {
+    static const bool v = [] {
+        const char* e = std::getenv("HYPERCORE_ADAPT_OVERLAP");
+#if defined(HYPERCORE_USE_HIP)
+        return e && e[0] == '1';      // HIP: not measured here, opt-in
+#else
+        return !(e && e[0] == '0');   // CUDA: on by default
+#endif
+    }();
+    return v;
+}
+
 /// --adapt-async: one background job at a time (the asynchronous adaptive tier's copies and memcpys).  `post` hands
 /// it over, `idle` says whether it has finished; the owner never posts while a job runs.
 class JobThread {
@@ -5114,7 +5131,7 @@ int main(int argc, char** argv) {
     //
     // and each generated token is written to stdout as `T <id>` as soon as its verify window is done, followed by
     //
-    //     DONE <generated> <prompt_tokens> <prompt_ms> <decode_ms> <stop|length|cancel> <drafts accepted>
+    //     DONE <generated> <prompt_tokens> <prompt_ms> <decode_ms> <stop|length|cancel|nonfinite> <drafts accepted>
     //          <drafts offered> <prompt tokens reused> ... <prompt tokens read>   (see the DONE line below; #471)
     //
     // Before that, `RESUME <n>` (n prompt tokens are not read again), `PP <position> <prompt_tokens> <ms> <tok/s>`
@@ -6372,6 +6389,7 @@ int main(int argc, char** argv) {
         std::vector<ImgKey> live_imgs, req_imgs;
         bool live_ok = false;
         std::vector<ConvCheckpoint> checks;
+        bool nan_flush = false;   // #879: a window met non-finite logits; the next request starts from token 0
         uint64_t check_clock = 0;   // the checkpoints' LRU clock; creation and every use advance it
         int64_t tail_ckpt_len = -1;   // --prompt-cache-tail: the length of the one tail checkpoint alive (-1 = none)
         bool cvec_cached = true;   // the control vector's state the live session and the checkpoints were read with
@@ -6747,14 +6765,27 @@ int main(int argc, char** argv) {
         // that every token of a verify window routes only at rank 7 or lower is neither copied nor computed.  A
         // plain `generate` run does not set it; only serve does.  =0 turns it off.  Nothing to skip when every
         // expert is in VRAM, and it is off with --batch slots (a window then mixes requests) or a peer/helper GPU.
+        // HYPERCORE_TAIL_SKIP_MAX_CACHED=<percent>, default 90 (101 = never): with nearly every expert already in
+        // the GPU cache the few misses are cheap and the skip costs more draft acceptance than it saves (#1884).
         {
             const char* tse = std::getenv("HYPERCORE_ROUTE_TAIL_SKIP");
 #if !defined(HYPERCORE_USE_HIP)
-            if (tse == nullptr && !all_experts_resident && drive.d.peer == nullptr && drive.d.remote_count == 0 &&
-                o.batch <= 0)
+            size_t cached_experts = 0;
+            for (int32_t r : host_res) cached_experts += r >= 0 ? 1 : 0;
+            const char* mcs = std::getenv("HYPERCORE_TAIL_SKIP_MAX_CACHED");
+            const double max_cached = mcs != nullptr && mcs[0] != 0 ? std::atof(mcs) / 100.0 : 0.90;
+            const bool plain_path = drive.d.peer == nullptr && drive.d.remote_count == 0 && o.batch <= 0;
+            const bool nearly_all_cached = !host_res.empty() && !all_experts_resident &&
+                                         (double) cached_experts >= max_cached * (double) host_res.size();
+            if (tse == nullptr && !all_experts_resident && plain_path && !nearly_all_cached)
                 hypercore::core::set_tail_skip_rank(7);
             else if (tse != nullptr)
                 hypercore::core::set_tail_skip_rank(std::atoi(tse));
+            if (tse == nullptr && nearly_all_cached && plain_path)
+                std::fprintf(stderr, "hypercore serve: HYPERCORE_ROUTE_TAIL_SKIP is off by default: %.1f%% of the experts are in the GPU "
+                                     "cache, so few are missed and skipping them costs more draft acceptance than it saves; "
+                                     "HYPERCORE_ROUTE_TAIL_SKIP=7 turns it on\n",
+                            100.0 * (double) cached_experts / (double) host_res.size());
 #else
             if (tse != nullptr) hypercore::core::set_tail_skip_rank(std::atoi(tse));
 #endif
@@ -6797,6 +6828,38 @@ int main(int argc, char** argv) {
         std::vector<void*> pin_live;   // the swaps' locked arena pages (pin_blob), unlocked once they have landed
         cudaEvent_t adapt_ev = nullptr;
         cudaEventCreateWithFlags(&adapt_ev, cudaEventDisableTiming);
+        // HYPERCORE_ADAPT_OVERLAP: the adaptive tier's copies land beside the window in flight.  The plain wait
+        // (apply_pending before the window) is kept everywhere the overlap cannot hold: a layer split, a peer, the
+        // remote tier, --adapt-async, --pipeline-windows, page-locked swap sources, the batched DMA copies, a lag
+        // other than 1, or a stage whose layers are planned on the device.
+        hypercore::core::AdaptGate agate;
+        bool aflipped = false;   // the pending swaps are in the tables and their copies may still be landing
+        bool aov = false;
+        int64_t aov_flips = 0;
+        if (adapt_overlap()) {
+            const char* why = multi_gpu || !stages.empty() ? "not on a layer split"
+                              : peer.valid() ? "not with --peer-device"
+                              : remote_opt ? "not with --remote-expert-opt"
+                              : o.adapt_async ? "not with --adapt-async"
+                              : o.pipeline_windows > 0 ? "not with --pipeline-windows"
+                              : pin_blobs_on() ? "not with page-locked swap sources"
+                              : hypercore::core::dma_batch_mode() != 0 ? "not with HYPERCORE_DMA_BATCH"
+                              : adapt_lag() != 1 || adapt_nowait() ? "not with HYPERCORE_ADAPT_LAG / HYPERCORE_ADAPT_NOWAIT"
+                              : drive.d.usage.empty() ? "the adaptive tier is off"
+                              : nullptr;
+            if (why == nullptr) {
+                agate.ticks.resize((size_t) g.n_layers + 1);
+                for (int64_t l = 0; l <= g.n_layers; ++l) agate.ticks[(size_t) l] = {&agate, (int32_t) l};
+                agate.has.assign((size_t) g.n_layers, 0);
+                if (!ver.set_adapt_gate(&agate)) why = "the device-planned layers (HYPERCORE_VERIFY_DEVICE_PLAN) are on";
+            }
+            aov = why == nullptr;
+            if (aov)
+                std::fprintf(stderr, "hypercore serve: adaptive overlap (HYPERCORE_ADAPT_OVERLAP=0 turns it off): the adaptive tier's copies land while the next window runs "
+                                     "(same tokens, a layer waits for its own copies)\n");
+            else if (std::getenv("HYPERCORE_ADAPT_OVERLAP") != nullptr)   // quiet when it was only the default
+                std::fprintf(stderr, "hypercore serve: HYPERCORE_ADAPT_OVERLAP=1 is off: %s\n", why);
+        }
         // a layer split's later stages keep a copy of the residency table on their devices, and swap on their own
         auto res_upload = [&]() {
             if (d_res != nullptr)
@@ -6825,6 +6888,8 @@ int main(int argc, char** argv) {
             }
             pending.clear();
             pending_age = 0;
+            agate.active.store(false, std::memory_order_release);   // the copies have landed
+            aflipped = false;
             res_upload();
         };
         // --pipeline-windows: set while the tier adapts beside windows in flight (see its use in adapt)
@@ -6857,6 +6922,12 @@ int main(int argc, char** argv) {
             }
             std::sort(swaps.begin(), swaps.end(), [](const Swap& a, const Swap& b) { return a.gain > b.gain; });
             if ((int) swaps.size() > o.adapt_swaps) swaps.resize((size_t) o.adapt_swaps);
+            if (aov) {   // the copies go in layer order and each layer's landing is told to the verify window
+                std::stable_sort(swaps.begin(), swaps.end(), [](const Swap& a, const Swap& b) { return a.layer < b.layer; });
+                agate.landed.store(-1, std::memory_order_release);
+                agate.has.assign((size_t) g.n_layers, 0);
+                for (const Swap& s : swaps) agate.has[(size_t) s.layer] = 1;
+            }
             // the copies back read the cache of the card that owns each layer (see resident_stage_swaps)
             auto home_of = [&](int64_t layer) -> SwapHome {
                 const int stn = multi_gpu ? stage_of(layer) : 0;
@@ -6926,6 +6997,16 @@ int main(int argc, char** argv) {
                 host_res[out] = hypercore::core::kNotResident;   // evicted now: the CPU computes it meanwhile
                 srcp->prefetch(s.layer, s.out);   // a file-backed arena released its pages: read them back ahead
                 pending.emplace_back((int32_t) in, slot);      // resident once the copy has landed
+                if (aov && (si + 1 == swaps.size() || swaps[si + 1].layer != s.layer) &&
+                    cudaLaunchHostFunc(adapt_stream, [](void* p) {
+                        auto* t = (hypercore::core::AdaptGate::Tick*) p;
+                        int32_t cur = t->gate->landed.load(std::memory_order_relaxed);
+                        while (cur < t->layer && !t->gate->landed.compare_exchange_weak(cur, t->layer, std::memory_order_release)) {}
+                    }, &agate.ticks[(size_t) s.layer]) != cudaSuccess) {
+                    (void) cudaGetLastError();
+                    cudaStreamSynchronize(adapt_stream);   // no callback: wait here, the gate opens at once
+                    agate.landed.store((int32_t) g.n_layers, std::memory_order_release);
+                }
             }
             if (!cp_dst.empty() && hypercore::core::copy_blobs(cp_dst.data(), cp_src.data(), cp_bytes.data(), cp_dst.size(),
                                                             adapt_stream, dma_mode) != cudaSuccess) {
@@ -8340,6 +8421,15 @@ int main(int argc, char** argv) {
                     std::fflush(stdout);
                     return 1;
                 }
+            }
+            // #879: a window that met non-finite logits poisons the state it wrote.  Nothing that could carry it is
+            // kept: the live session and its checkpoints are dropped and this request reads its prompt from token 0.
+            if (nan_flush) {
+                nan_flush = false;
+                live.clear(); live_imgs.clear(); live_ok = false; checks.clear();
+                for (BSlot& sl : bs) { sl.active = false; sl.cached = false; sl.ids.clear(); sl.checks.clear(); }
+                std::fprintf(stderr, "hypercore serve: the state left by the request that met non-finite logits is "
+                                     "dropped (#879); this request reads its prompt from token 0\n");
             }
             int64_t resume = 0;
             bool from_live = false;
@@ -9805,6 +9895,15 @@ int main(int argc, char** argv) {
                 // expert ran on the GPU or the CPU (they round differently) depended on the copy's timing
                 // (HYPERCORE_ADAPT_NOWAIT=1: 0.1.37's non-blocking query, the A/B)
                 if (adapt_nowait()) apply_pending(false);
+                else if (aov && !pending.empty() && !aflipped) {
+                    // HYPERCORE_ADAPT_OVERLAP: the tables take the swaps now, exactly where the wait would have ended;
+                    // the copies still landing are waited for per layer inside the window (AdaptGate)
+                    for (const auto& [i, slot] : pending) host_res[(size_t) i] = slot;
+                    res_upload();
+                    aflipped = true;
+                    ++aov_flips;
+                    agate.active.store(true, std::memory_order_release);
+                }
                 else if (pending.empty() || ++pending_age >= adapt_lag()) apply_pending(true);
                 if (!adapt_tick(false)) {   // --adapt-async: the round in flight moves on a step when it can
                     std::printf("ERR an adaptive refill failed\n");
@@ -9832,6 +9931,17 @@ int main(int argc, char** argv) {
                 if (!ver.run(T, window.data(), p, win_pool_fn, win_pool_user, outv.data(), err) || drive.d.failed) {
                     std::printf("ERR %s\n", drive.d.failed && drive.d.fail ? drive.d.fail : err.c_str());
                     return 1;
+                }
+                if (aflipped) apply_pending(true);   // the overlap: every layer's copies were waited for in the window; the bookkeeping now
+                if (ver.nonfinite_row() >= 0) {   // #879: this window's head logits are not all finite
+                    std::fprintf(stderr, "hypercore serve: non-finite logits (#879) in a window at position %lld "
+                                         "(row %d): its tokens are not emitted, the request ends (DONE nonfinite) and "
+                                         "the next request reads its prompt from token 0\n",
+                                 (long long) p, ver.nonfinite_row());
+                    std::fflush(stderr);
+                    nan_flush = true;
+                    finish = "nonfinite";
+                    break;
                 }
                 int a = 0;
                 while (a < T - 1 && window[(size_t) a + 1] == outv[(size_t) a]) ++a;
@@ -10210,6 +10320,9 @@ int main(int argc, char** argv) {
             if (sfx_windows > 0)
                 std::fprintf(stderr, "hypercore serve: suffix drafts: %lld windows, %lld of %lld drafts accepted\n",
                              (long long) sfx_windows, (long long) sfx_ok, (long long) sfx_drafts);
+            if (aov)
+                std::fprintf(stderr, "hypercore serve: adapt overlap: %lld windows took swaps still landing, a layer waited %.2f ms in all so far\n",
+                             (long long) aov_flips, ver.ms_gate);
             if (o.lookup_chain > 0)
                 std::fprintf(stderr, "hypercore serve: lookup chain: %lld of %lld windows, %lld of %lld chained drafts accepted\n",
                              (long long) chain_windows, (long long) dec_windows, (long long) chain_ok, (long long) chain_drafts);
@@ -10886,6 +10999,11 @@ int main(int argc, char** argv) {
                 else if (pending.empty() || ++pending_age >= adapt_lag()) apply_pending(true);
             if (!ver.run(T, window.data(), p, &drive_pool_multi, &drive, outv.data(), err)) {
                 std::fprintf(stderr, "hypercore generate: %s\n", err.c_str());
+                return 1;
+            }
+            if (ver.nonfinite_row() >= 0) {   // #879: the window's head logits are not all finite
+                std::fprintf(stderr, "hypercore generate: non-finite logits (#879) at position %lld row %d: the run stops\n",
+                             (long long) p, ver.nonfinite_row());
                 return 1;
             }
             if (drive.d.failed) {

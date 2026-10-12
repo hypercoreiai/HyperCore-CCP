@@ -55,6 +55,18 @@ struct VerifyHits {
     int64_t blob = 0;
 };
 
+/// HYPERCORE_ADAPT_OVERLAP (the Strata 0.1.43 port): the adaptive tier's swap copies land while the next decode
+/// window already runs.  `landed` is the highest layer whose copies have completed; a window holds a layer's plan
+/// back until that layer's copies have landed, so the tokens are the same as with the plain wait and only the timing
+/// changes.  The copy stream's host functions raise `landed`; the window spins on it (no driver call).
+struct AdaptGate {
+    struct Tick { AdaptGate* gate; int32_t layer; };   ///< stable storage for the copy stream's host functions
+    std::atomic<int32_t> landed{-1};                   ///< the highest layer whose copies have landed (n_layers: all)
+    std::atomic<bool> active{false};                   ///< a swap round is in flight
+    std::vector<uint8_t> has;                          ///< per layer: a swap copies into this layer's slots
+    std::vector<Tick> ticks;                           ///< one per layer, plus the final one
+};
+
 class Verifier {
 public:
     Verifier() = default;
@@ -176,6 +188,16 @@ public:
     }
     const int32_t* batch_out() const { return b_out_; }
     bool last_stage() const { return g_ != nullptr && le_ == g_->n_layers; }
+    /// #879, the NaN guard.  nonfinite_row() is the first row of the last window whose head logits held a NaN or an
+    /// infinity, else -1; nonfinite_pos() is that row's position; nonfinite_in(t) is row t of the window.  Every
+    /// window graph checks its T rows on the device beside the greedy pick (logits_nonfinite_rows into mapped flags,
+    /// read after the window's sync); HYPERCORE_NAN_GUARD=0 turns the check off.
+    int nonfinite_row() const { return next_ != nullptr && !last_stage() ? next_->nonfinite_row() : nf_row_; }
+    int64_t nonfinite_pos() const { return next_ != nullptr && !last_stage() ? next_->nonfinite_pos() : nf_pos_; }
+    bool nonfinite_in(int t) const {
+        if (next_ != nullptr && !last_stage()) return next_->nonfinite_in(t);
+        return t >= 0 && t < 32 && ((nf_mask_ >> t) & 1u) != 0;   // a window is at most kVerifyMaxT rows
+    }
     /// commit() returns without waiting for its graph (a single-GPU session sets it): the next window follows it on
     /// the same stream and the drafter reads nothing it writes, so it overlaps the draft. Whoever reads or writes
     /// the session from another stream or the host afterwards (a new request, a checkpoint, a snapshot, the prompt
@@ -248,9 +270,18 @@ public:
     /// arena directly, 2 = a copy kernel stages it inside the graph (no API calls on the pool's thread; best when
     /// the CPU is RAM-bound, Q2_0).  Set before the first `run`.
     void set_pcie_mode(int mode) { sink_.pcie_mode = mode; }
+    /// HYPERCORE_ADAPT_OVERLAP: the adaptive tier's overlap gate (see AdaptGate).  Refused (false) with the
+    /// device-planned layers (HYPERCORE_VERIFY_DEVICE_PLAN), which never ask the host.  The pointer must outlive
+    /// the verifier's windows.  Set before the first `run`.
+    bool set_adapt_gate(AdaptGate* g) {
+        if (g != nullptr && device_plan_) return false;
+        adapt_gate_ = g;
+        return true;
+    }
     /// the pool never plans a PCIe share (--pcie-frac 0): the window skips that path.  Before the first run.
 
     double ms_wait = 0, ms_pool = 0, ms_host = 0, ms_commit = 0;
+    double ms_gate = 0;   ///< host time a layer's plan was held for the adaptive copies (overlap only)
     int64_t windows = 0;
     /// HYPERCORE_VERIFY_PROFILE=1 - GPU stage times of the windows since the last call (ms per
     /// window), as one line; empty when off.
@@ -329,6 +360,8 @@ private:
     /// was all-resident.  refresh_ar() looks at the host table before each window.
     bool ar_off_ = false;
     bool ar_on() const { return all_resident_ && !ar_off_; }
+    AdaptGate* adapt_gate_ = nullptr;   ///< HYPERCORE_ADAPT_OVERLAP: null when the overlap is off
+    bool adapt_gate_wait(int32_t layer, std::string& err);
     void refresh_ar();
     uint32_t* h_plan_err_ = nullptr; uint32_t* m_plan_err_ = nullptr;   // set by resident_plan on a -1 (all-resident graph)
     const int32_t* h_res_ = nullptr;      ///< the host residency table (VerifyHits::h_res)
@@ -387,6 +420,14 @@ private:
     int32_t* h_commit_ = nullptr; int32_t* m_commit_ = nullptr; // [n_keep, n_keep-1, pos_0 .. pos_{T-1}]
     float* h_ple_ = nullptr;     float* m_ple_ = nullptr;       // T * n_embd
     int32_t* h_out_ = nullptr;   int32_t* m_out_ = nullptr;     // T argmax ids
+    uint32_t* h_nf_ = nullptr;   uint32_t* m_nf_ = nullptr;     // #879: kVerifyMaxT * kNonfiniteBlocks flags
+    uint8_t* xil_ = nullptr;                                    // HYPERCORE_MMVQ_IL: the interleaved copy of xq_'s columns
+    static bool mmvq_il_on();                                   ///< HYPERCORE_MMVQ_IL=0 keeps native_mmvq's multi-column kernels
+    int nf_row_ = -1;                                            ///< nonfinite_row()
+    int64_t nf_pos_ = -1;                                        ///< nonfinite_pos()
+    uint32_t nf_mask_ = 0;                                       ///< nonfinite_in(): bit t = row t
+    static bool nan_guard_on();                                  ///< HYPERCORE_NAN_GUARD=0 turns the guard off
+    void note_nonfinite(int T, int64_t pos0);                    ///< the window's flags (+ HYPERCORE_NAN_INJECT) -> nf_row_
     float* h_x_ = nullptr;       float* m_x_ = nullptr;         // doorbell payload: T * n_embd
     int32_t* h_ids_ = nullptr;   int32_t* m_ids_ = nullptr;     // T * k
     float* h_w_ = nullptr;       float* m_w_ = nullptr;         // T * k

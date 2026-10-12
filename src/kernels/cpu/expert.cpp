@@ -145,6 +145,8 @@ inline float hsum_ps(__m256 v) {
 //
 // The 256-bit row dot below spent ~12 cycles per 64-weight block: two unpacks, two VNNI dots, two converts, two
 // scalar scale products broadcast into two FMAs, an fp16 conversion and a scalar correction - compute-bound at
+
+
 // ~39 GB/s while the machine streams 52.  Here a block is ONE unpack (16 code bytes -> 64 codes), ONE VNNI dot
 // over 64 activations, ONE convert and ONE FMA whose per-chunk scales come from a permute of a vector of scale
 // products built for eight blocks at a time; the weight-independent correction is one FMA per eight blocks.
@@ -380,7 +382,7 @@ void cpu_require_expert_support() {
                  "        The engine needs AVX512-VNNI and AVX512-VBMI (Intel Ice Lake / AMD Zen 4 or newer).\n"
                  "        The scalar fallback exists for tests only and is far too slow to decode with.\n",
                  f.reason());
-    std::exit(1);
+    std::exit(1);  // the header's contract: REFUSE rather than let the kernel SIGILL at token 4000
 }
 
 void act_quant_q8_1(const float* x, int n, ActQ& a) {

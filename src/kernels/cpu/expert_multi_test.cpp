@@ -32,6 +32,14 @@ double now_ms() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Both kernels under test are AVX-512 (VNNI + VBMI) and there is no scalar twin to compare
+    // them against, so on a CPU without the ISA the honest answer is SKIPPED, not an illegal
+    // instruction.  Same convention as expert_parity.cpp.
+    if (!c::cpu_features().usable()) {
+        std::printf("expert_multi_test: SKIPPED, not passed: this CPU is missing %s\n",
+                    c::cpu_features().reason());
+        return 0;
+    }
     c::cpu_require_expert_support();
     std::mt19937 rng(9);
     const bool bench = argc > 1 && std::strcmp(argv[1], "--bench") == 0;

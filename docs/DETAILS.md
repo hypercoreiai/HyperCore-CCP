@@ -231,6 +231,25 @@ RTX 5070, against ~3 tokens/s before these changes.
 - Elsewhere: HIP `HYPERCORE_DENSE_MMQ=1` and `HYPERCORE_HIP_ADAPT_KERNEL_COPY=1` in [AMD_HIP.md](AMD_HIP.md#model-and-serving-configuration);
   `HYPERCORE_KEEP_EMPTY_TURNS=1` and `HYPERCORE_TOPK_STREAM=0` in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
+**Switches added in 0.1.42 (ported from Strata 0.1.43; on unless noted):**
+- `HYPERCORE_MMVQ_IL=0`: a window's dense projections (1-4 columns at a time) read an interleaved copy of its
+  Q8_1 activations (`native_mmvq_il`) instead of `native_mmvq`'s kernels. The interleaved copy is written for the
+  2-4 column calls; the single-column ones use their own row forms, off with `HYPERCORE_MMVQ_IL_T1=0`, and Q3_K
+  keeps `native_mmvq`'s kernels with `HYPERCORE_MMVQ_IL_Q3K=0`. It runs on sm_80 and newer
+  (Volta with `HYPERCORE_SM70_TABLE=1`, Pascal by its own table), only for the types the row table covers, and the
+  rows a warp uses come from a per-card table: `mmvq_il_parity --bench --emit-table` prints one for a card that has
+  none, and `HYPERCORE_MMVQ_IL_ROWS="type:ncols:r0,r1,r2,r3,r4;..."` sets rows without a rebuild. The output is
+  bitwise the same as `native_mmvq`'s; only the timing differs.
+- `HYPERCORE_NAN_GUARD=0` (#879): every window graph checks its own head logits for a NaN or an infinity on the
+  device beside the greedy pick. When a window meets one its tokens are not emitted, the request ends with
+  `DONE ... nonfinite`, the state that window wrote is dropped and the next request reads its prompt from token 0.
+  `HYPERCORE_NAN_INJECT=3,7` (debug) makes the guard report the windows it is given, so the recovery path can be
+  exercised on a model that does not happen to produce a NaN.
+- `HYPERCORE_ADAPT_OVERLAP=0`: the adaptive tier's copies go in layer order and land beside the window already in
+  flight, which holds a layer's plan back until that layer's copies have arrived. The tables take the swaps at the
+  point the plain wait would have ended, so the tokens are the same ones; only when the bytes arrive changes. On for
+  CUDA, off with `=0`, opt-in on HIP (`=1`).
+
 
 **Read-ahead at start (Linux):** the weights, the native dense matrices, the GPU cache's fill from the profile, the
 resident RAM copy and the MTP draft files are asked for ahead of their reads (madvise / posix_fadvise WILLNEED in
@@ -433,7 +452,9 @@ With more than one model installed, it asks which one to start. `run-<model>.bat
   of a verify window routes only at rank 7 or lower is neither copied over PCIe nor computed - its output row is
   left zero. It is on by default when some experts are not resident and off with `--batch` slots or a peer/helper
   GPU; `HYPERCORE_ROUTE_TAIL_SKIP=0` restores the previous behaviour, and the engine prints the count of skipped
-  experts in its serve log.
+  experts in its serve log. It is not turned on at all when `HYPERCORE_TAIL_SKIP_MAX_CACHED` (default 90, 101 = never)
+  is below the share of experts already in the GPU cache: with almost nothing missed the skip costs more draft
+  acceptance than it saves, and the serve log says so.
 - how busily the VRAM expert cache follows the conversation (`--adapt-every`, `--adapt-swaps`, `--adapt-decay`): a PC
   whose CPU reads the missed experts slowly (DDR3 or DDR4 in few channels) gains from swapping more. The figure
   quoted below is Strata 0.1.42's measurement on that machine, not a run in this workspace: on a Xeon E5-2673 v3

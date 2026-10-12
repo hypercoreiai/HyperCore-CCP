@@ -403,6 +403,13 @@ if(HYPERCORE_ENABLE_CUDA OR HYPERCORE_ENABLE_HIP)
     add_test(NAME qsa_topk_active_parity COMMAND qsa_topk_active_parity)
     set_tests_properties(qsa_topk_active_parity PROPERTIES SKIP_RETURN_CODE 77)
   endif()
+  # #879, the NaN guard: the non-finite row flags against a host scan, and the logits it reads left untouched
+  if(HYPERCORE_BUILD_TESTS AND HYPERCORE_ENABLE_CUDA)
+    add_executable(nan_guard_parity src/kernels/nan_guard_parity.cpp)
+    target_include_directories(nan_guard_parity PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+    target_link_libraries(nan_guard_parity PRIVATE hypercore_kernels CUDA::cudart)
+    add_test(NAME nan_guard_parity COMMAND nan_guard_parity --selftest)
+  endif()
   # the QSA selection (block scores on the warp kernel and the tensor-core one, top-k): a GPU bench with a
   # scorer-vs-scorer comparison and an FP64 accuracy gate (synthetic, no model); the ctest runs a 32K context under a
   # 262144-cell capacity (the top-k dispatch follows the capacity) and exits non-zero on a failed gate
@@ -744,6 +751,12 @@ if(HYPERCORE_ENABLE_CUDA OR HYPERCORE_ENABLE_HIP)
       add_test(NAME mmvq_multi_parity_cuda_layout COMMAND mmvq_multi_parity)
       set_tests_properties(mmvq_multi_parity_cuda_layout PROPERTIES ENVIRONMENT "HYPERCORE_MMVQ_WAVE=0")
     endif()
+    # HYPERCORE_MMVQ_IL: the interleaved 2-4 column matvec against native_mmvq, bitwise, for every rows-a-warp
+    # choice; --bench --emit-table prints the rows table this card measured (see docs/MMVQ_IL_TABLE.md)
+    add_executable(mmvq_il_parity src/kernels/mmvq_il_parity.cpp)
+    target_include_directories(mmvq_il_parity PRIVATE ${_hypercore_gpu_include_directories})
+    target_link_libraries(mmvq_il_parity PRIVATE hypercore_kernels ${_hypercore_gpu_runtime_target})
+    add_test(NAME mmvq_il_parity COMMAND mmvq_il_parity)
   endif()
   # the IQ kernels that decode a weight part once for every column/entry, bitwise vs the per-column ones
   # (GPU, synthetic, no model; --bench adds old/new timings)

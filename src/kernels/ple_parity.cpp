@@ -251,9 +251,10 @@ int main(int argc, char** argv) {
     bool selftest = false;
     bool check_fixtures = false;
     std::string pack = "pack/full";
-    // --gguf, else $HYPERCORE_PLE_GGUF, else the development layout (run from the engine root)
+    // --gguf, else $HYPERCORE_PLE_GGUF, else the model next to the engine root (CMake pins the working
+    // directory to the source tree, so the path is relative to it)
     std::string gguf = std::getenv("HYPERCORE_PLE_GGUF") ? std::getenv("HYPERCORE_PLE_GGUF")
-                                                      : "../../Q2_0/Qwen3.8-Flash-Next-GSQ-RCO-Q2_0-00002-of-00002.gguf";
+                                                      : "Q2_0/Qwen3.8-Flash-Next-GSQ-RCO-Q2_0-00002-of-00002.gguf";
     std::string in_bin = "bench/micro/ple_in.bin", out_bin = "bench/micro/ple_out.bin";
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -583,6 +584,29 @@ int main(int argc, char** argv) {
         cap.dil != k::NGRAM_SIZE) {
         std::printf("  *** the capture's geometry is not the artifact's ***\n");
         return 1;
+    }
+
+    // A capture with no signal makes every oracle below compare 0 against 0: the weight check
+    // fails, the "is this observable" traps report NO, and the stage comparisons all report
+    // rel 0.000e+00 for the wrong reason.  Say so here, once, instead of emitting seven
+    // unrelated failures.  The fixture is generated from the pack by
+    // bench/micro/generate_test_data.py.
+    {
+        double emb_mag = 0.0, weight_mag = 0.0;
+        long long live_rows = 0;
+        for (const float v : cap.emb) emb_mag += std::fabs(v);
+        for (const float v : cap.w_key) weight_mag += std::fabs(v);
+        for (size_t i = 0; i < cap.normalized.size(); ++i)
+            if (cap.normalized[i] != 0.0f) { ++live_rows; break; }
+        const bool signal = emb_mag > 1.0 && weight_mag > 1.0 && live_rows > 0;
+        std::printf("  %-52s %s (sum |emb| %.1f, sum |w_key| %.1f)\n",
+                    "the capture carries a signal", signal ? "yes" : "*** NO, placeholder fixture ***",
+                    emb_mag, weight_mag);
+        if (!signal) {
+            std::printf("  regenerate it with: python3 bench/micro/generate_test_data.py\n");
+            std::printf("\nple_parity: %d failures, BLOCK SKIPPED; the fixture has no signal\n", bad + 1);
+            return 1;
+        }
     }
 
     if (!k::ple_block_available()) {

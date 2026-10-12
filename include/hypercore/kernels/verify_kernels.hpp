@@ -124,4 +124,10 @@ void dense_steps(const int32_t* cells, int n, int32_t* steps, void* stream);
 /// last `window` cells: ids[q * ids_stride + j] = max(0, n_kv - window) + j and the record's width = the count.
 void window_ids(int32_t* steps, int n, int window, int32_t* ids, int64_t ids_stride, void* stream);
 
+/// #879, the NaN guard.  flags[t * kNonfiniteBlocks + b] = 1 when slice b of row t (n floats a row) holds a NaN or
+/// an infinity.  The test is on the exponent bits, so --use_fast_math cannot fold it away; the kernel adds nothing
+/// to the values themselves, so a window's picks are unchanged by the check.
+inline constexpr int kNonfiniteBlocks = 16;
+void logits_nonfinite_rows(const float* logits, int n_rows, int n, uint32_t* flags, void* stream);
+
 }  // namespace hypercore::kernels

@@ -441,7 +441,9 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
               mapped(64, (void**) &h_flagA_, (void**) &m_flagA_) &&
               mapped(64, (void**) &h_flagB_, (void**) &m_flagB_) &&
               mapped(64, (void**) &h_plan_err_, (void**) &m_plan_err_) &&
-              mapped(T * K * N * 4, (void**) &h_ymiss_, (void**) &m_ymiss_);
+              mapped(T * K * N * 4, (void**) &h_ymiss_, (void**) &m_ymiss_) &&
+              mapped((size_t) hypercore::kernels::kVerifyMaxT * hypercore::kernels::kNonfiniteBlocks * 4,
+                     (void**) &h_nf_, (void**) &m_nf_);
     if (!ok) { err = "verify: mapped staging allocation failed"; return false; }
     // the GPU plan: counts(4) | start(cap+1) | dst(cap) | tok(cap) | pad | ptr(cap u64) | ptr2(cap u64) | start2(cap+1)
     {
@@ -476,6 +478,8 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
         lo_ = b.take<float>(T * (uint64_t) g.hc_lr); rs_ = b.take<float>(T * HC); xn_ = b.take<float>(T * HC * N);
         xq_ = b.take<uint8_t>(hypercore::kernels::native_q8_1_bytes(max_in, (int) T));
         sh_xq_ = b.take<uint8_t>(hypercore::kernels::native_q8_1_bytes(max_in, (int) T));
+        if (mmvq_il_on())   // HYPERCORE_MMVQ_IL: the interleaved copy the small-batch matvec reads
+            xil_ = b.take<uint8_t>(hypercore::kernels::native_q8_1_il_bytes(max_in, (int) T));
         qkv_L_ = b.take<float>(nG * T * C); h_L_ = b.take<float>(nG * T * C);
         gate_L_ = b.take<float>(nG * T * HV); beta_L_ = b.take<float>(nG * T * HV);
         z_ = b.take<float>(T * ZV); y_ = b.take<float>(T * ZV); y_dummy_ = b.take<float>(T * ZV);
@@ -654,6 +658,22 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
         if (prof_on_ && grp == 0) gpu_stamp(prof_, (int) (l * kProfPer + i), cs);
         if (trace_m_ != nullptr) gpu_stamp(trace_m_, (int) ((l * kProfPer + i) * 2 + grp), cs);   // #649
     };
+    // HYPERCORE_MMVQ_IL (the Strata 0.1.43 fork F4): a window's 2..4 column dense projections read an interleaved
+    // copy of the q8_1 activations.  Bitwise native_mmvq's output; only the speed differs.  The copy is written once
+    // per group, after that group's xq_, and xil_ is sized for the widest window.  HYPERCORE_MMVQ_IL=0 keeps the
+    // plain multi-column kernels.
+    const bool il_on = mmvq_il_on() && xil_ != nullptr;
+    bool il_ready = false;   // xil_ holds xq_'s interleaved columns; reset whenever xq_ is rewritten
+    auto mmvq = [&](int type, const void* weights, const void* x_q8_1, float* out, int n_in, int n_out, int ncols,
+                    cudaStream_t s) {
+        if (il_on && native_mmvq_il_supported(type, ncols, n_out)) {
+            if (!il_ready && ncols >= 2) { native_q8_1_interleave(x_q8_1, xil_, n_in, ncols, cs); il_ready = true; }
+            native_mmvq_il(type, weights, x_q8_1, il_ready ? xil_ : x_q8_1, out, n_in, n_out, ncols, cs);
+        } else {
+            native_mmvq(type, weights, x_q8_1, out, n_in, n_out, ncols, s);
+        }
+    };
+    auto quant_xq = [&](const float* src, int n) { native_quantize_q8_1(src, xq_, (int) N, n, cs); il_ready = false; };
     const int tb_[2] = {0, (T + 1) / 2}, te_[2] = {G == 2 ? (T + 1) / 2 : T, T};
     // S26 HYPERCORE_LFUSE=1: where the shared expert's gate / scale fusions apply (the paths they replace are the ones taken)
     auto lfuse_on = [&](int n) {
@@ -765,8 +785,8 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                         bf16_gemv_fp32_mmvf_multi(ple_ + tb * N, N, pw.key_bf16, ple_key_ + (size_t) tb * NG_HC_DIM,
                                                   NG_HC_DIM, N, NG_HC_DIM, n, cs);
                     else {
-                        native_quantize_q8_1(ple_ + tb * N, xq_, (int) N, n, cs);
-                        native_mmvq(pw.key_native_type, pw.key_native_data, xq_, ple_key_ + (size_t) tb * NG_HC_DIM,
+                        quant_xq(ple_ + tb * N, n);
+                        mmvq(pw.key_native_type, pw.key_native_data, xq_, ple_key_ + (size_t) tb * NG_HC_DIM,
                                     (int) N, NG_HC_DIM, n, cs);
                     }
                     bf16_gemv_fp32_mmvf_multi(ple_ + tb * N, N, pw.value_bf16, ple_val_ + tb * N, N, N, N, n, cs);
@@ -822,7 +842,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
             return fused_gr_read_multi(fa, n, xn_ + (size_t) tb * HC * N, cs, (prof_on_ && grp == 0) ? prof_ : nullptr,
                                 (int) (l * kProfPer + (half == 0 ? 27 : 30)));
         };
-        const bool q8_attn = gr_read_group(0, pending, inj2_, inj_);   // true: xq_ holds mixed's q8_1 (HYPERCORE_QFUSE)
+        const bool q8_attn = gr_read_group(0, pending, inj2_, inj_); il_ready = false;   // the fused read wrote xq_   // true: xq_ holds mixed's q8_1 (HYPERCORE_QFUSE)
         stamp(l, 1, grp);
         float* xm = mixed_ + tb * N;
         try {
@@ -844,8 +864,8 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                 float* hb = h_L_ + (size_t) gi * MT * C;
                 float* gate = gate_L_ + (size_t) gi * MT * HV;
                 float* beta = beta_L_ + (size_t) gi * MT * HV;
-                if (!q8_attn) native_quantize_q8_1(xm, xq_, (int) N, n, cs);
-                native_mmvq(wqkv->native_type, wqkv->native_data, xq_, qkv + (size_t) tb * C, (int) N, (int) C, n, cs);
+                if (!q8_attn) quant_xq(xm, n);
+                mmvq(wqkv->native_type, wqkv->native_data, xq_, qkv + (size_t) tb * C, (int) N, (int) C, n, cs);
                 stamp(l, 2, grp);
                 if (batch_rec_) {   // contiguous rows may be proposals for the same slot
                     for (int t = tb; t < te;) {
@@ -866,7 +886,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                              (const float*) wsa->data, gate + (size_t) tb * HV, beta + (size_t) tb * HV, (int) N, (int) HV,
                              n, cs);
                 stamp(l, 4, grp);
-                native_mmvq(wg->native_type, wg->native_data, xq_, z_ + (size_t) tb * ZV, (int) N, (int) ZV, n, cs);
+                mmvq(wg->native_type, wg->native_data, xq_, z_ + (size_t) tb * ZV, (int) N, (int) ZV, n, cs);
                 stamp(l, 5, grp);
                 // the recurrence from the untouched state over tokens [0, te); outputs only for this group's
                 if (batch_rec_) {   // each slot's recurrence over its own proposed-token group
@@ -885,7 +905,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                                     (int) HV, te, self_commit ? one_ : nullptr, cs, tb, g_qfuse() ? (void*) xq_ : nullptr);
                 stamp(l, 6, grp);
                 if (!g_qfuse()) native_quantize_q8_1(y_ + (size_t) tb * ZV, xq_, (int) ZV, n, cs);   // HYPERCORE_QFUSE: done above
-                native_mmvq(wout->native_type, wout->native_data, xq_, bo_ + tb * N, (int) ZV, (int) N, n, cs);
+                mmvq(wout->native_type, wout->native_data, xq_, bo_ + tb * N, (int) ZV, (int) N, n, cs);
             } else {
                 // ======================= QSA =======================
                 const int64_t qi = qsa_idx[(size_t) l];
@@ -917,13 +937,13 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                 // the per-token GEMVs / norms / RoPEs / copies of this layer as one launch over the
                 // window's rows each - row-wise identical arithmetic (HYPERCORE_DEC_BATCH=0: token by token)
                 const bool qb = dec_batch && n > 1 && native_qsa_enabled() && native_rope_enabled() && !st.kv_q4;
-                if (!q8_attn) native_quantize_q8_1(xm, xq_, (int) N, n, cs);
+                if (!q8_attn) quant_xq(xm, n);
                 if (qb) bf16_gemv_fp32_mmvf_multi(mixed_ + tb * N, N, (const uint16_t*) wik->data, idx_raw + tb * ID, ID, N, ID, n, cs);
                 else for (int t = tb; t < te; ++t)
                     bf16_gemv_fp32_mmvf(mixed_ + t * N, (const uint16_t*) wik->data, idx_raw + t * ID, (int) N, (int) ID, cs);
                 stamp(l, 7, grp);
-                native_mmvq(wk->native_type, wk->native_data, xq_, kcur_ + tb * NKV * HD, (int) N, (int) (NKV * HD), n, cs);
-                native_mmvq(wv->native_type, wv->native_data, xq_, vcur_ + tb * NKV * HD, (int) N, (int) (NKV * HD), n, cs);
+                mmvq(wk->native_type, wk->native_data, xq_, kcur_ + tb * NKV * HD, (int) N, (int) (NKV * HD), n, cs);
+                mmvq(wv->native_type, wv->native_data, xq_, vcur_ + tb * NKV * HD, (int) N, (int) (NKV * HD), n, cs);
                 if (qb) norm_rope(kcur_ + tb * NKV * HD, wkn, (int) (n * NKV), (int) HD, pos_k + tb * NKV);
                 else for (int t = tb; t < te; ++t) norm_rope(kcur_ + t * NKV * HD, wkn, (int) NKV, (int) HD, pos_ + t * NH);
                 if (st.kv_rot) {   // K and V rotated before they are stored (kv_q4.hpp)
@@ -997,7 +1017,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                     }
                 }
                 stamp(l, 9, grp);
-                native_mmvq(wq->native_type, wq->native_data, xq_, qfull_ + tb * NH * 2 * HD, (int) N, (int) (NH * 2 * HD),
+                mmvq(wq->native_type, wq->native_data, xq_, qfull_ + tb * NH * 2 * HD, (int) N, (int) (NH * 2 * HD),
                             n, cs);
                 if (qb) {
                     if (fuse_nr) {   // the q/gate split reads q straight out of the q|gate rows (stride 2 * HD)
@@ -1079,7 +1099,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                 }
                 stamp(l, 14, grp);
                 native_quantize_q8_1(attn32_ + tb * NH * HD, xq_, (int) (NH * HD), n, cs);
-                native_mmvq(wo->native_type, wo->native_data, xq_, bo_ + tb * N, (int) (NH * HD), (int) N, n, cs);
+                mmvq(wo->native_type, wo->native_data, xq_, bo_ + tb * N, (int) (NH * HD), (int) N, n, cs);
             }
         } catch (const std::exception& e) {
             err = "verify layer " + std::to_string(l) + ": " + e.what();
@@ -1409,7 +1429,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
         if (head_ != nullptr && head_->loaded()) {
             try {
                 native_quantize_q8_1(head_mixed_, xq_, (int) N, T, cs);
-                native_mmvq(head_->type(), head_->weights(), xq_, head_logits_, (int) N, (int) n_vocab_, T, cs);
+                mmvq(head_->type(), head_->weights(), xq_, head_logits_, (int) N, (int) n_vocab_, T, cs);
             } catch (const std::exception& e) {
                 err = std::string("verify head: ") + e.what();
                 return false;
@@ -1426,9 +1446,75 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
             sp.temperature = 0.0f;
             sample_tokens(head_logits_, T, (int) n_vocab_, nullptr, 0, sp, m_out_, cs);
         }
+        // #879, the NaN guard: the check is captured beside the pick, so it costs one kernel a window and never a
+        // host read.  It changes no value, only the flags.
+        if (nan_guard_on() && m_nf_ != nullptr)
+            logits_nonfinite_rows(head_logits_, T, (int) n_vocab_, m_nf_, cs);
     }
     stamp(g.n_layers, 1, 0);
     return true;
+}
+
+// HYPERCORE_MMVQ_IL=0 keeps native_mmvq's multi-column kernels (the A/B arm of the interleaved matvec).
+bool Verifier::mmvq_il_on() {
+    static const bool on = [] {
+        const char* v = std::getenv("HYPERCORE_MMVQ_IL");
+        return v == nullptr || v[0] != '0';
+    }();
+    return on;
+}
+
+// #879: HYPERCORE_NAN_GUARD=0 turns the guard off.  No kernel is recorded then; the graphs are captured once, so
+// the variable is read once.
+bool Verifier::nan_guard_on() {
+    static const bool on = [] {
+        const char* v = std::getenv("HYPERCORE_NAN_GUARD");
+        return v == nullptr || std::atoi(v) != 0;
+    }();
+    return on;
+}
+
+namespace {
+// HYPERCORE_NAN_INJECT=<n>[,<n>...] (debug): the windows (counted from 1 over the process) the guard reports as
+// non-finite, so the self-healing path can be exercised without a model that happens to produce a NaN.
+const std::vector<long long>& nan_inject_list() {
+    static const std::vector<long long> list = [] {
+        std::vector<long long> v;
+        if (const char* e = std::getenv("HYPERCORE_NAN_INJECT"))
+            for (const char* q = e; *q != 0;) {
+                char* end = nullptr;
+                const long long n = std::strtoll(q, &end, 10);
+                if (end == q) break;
+                if (n > 0) v.push_back(n);
+                q = *end == ',' ? end + 1 : end;
+            }
+        return v;
+    }();
+    return list;
+}
+std::atomic<long long> g_nf_windows{0};
+}  // namespace
+
+void Verifier::note_nonfinite(int T, int64_t pos0) {
+    nf_row_ = -1;
+    nf_pos_ = -1;
+    nf_mask_ = 0;
+    if (!nan_guard_on() || h_nf_ == nullptr || !last_stage()) return;   // a stage without the head checks nothing
+    const volatile uint32_t* f = h_nf_;
+    for (int t = 0; t < T && t < hypercore::kernels::kVerifyMaxT; ++t)
+        for (int b = 0; b < hypercore::kernels::kNonfiniteBlocks; ++b)
+            if (f[t * hypercore::kernels::kNonfiniteBlocks + b] != 0) { nf_mask_ |= 1u << t; break; }
+    const std::vector<long long>& inject = nan_inject_list();
+    if (!inject.empty()) {
+        const long long k = g_nf_windows.fetch_add(1) + 1;
+        if (nf_mask_ == 0 && std::find(inject.begin(), inject.end(), k) != inject.end()) {
+            nf_mask_ = 1u;
+            std::fprintf(stderr, "hypercore verify: HYPERCORE_NAN_INJECT: window %lld reported as non-finite\n", k);
+        }
+    }
+    for (int t = 0; t < T && nf_row_ < 0; ++t)
+        if ((nf_mask_ >> t) & 1u) nf_row_ = t;
+    if (nf_row_ >= 0) nf_pos_ = pos0 + nf_row_;
 }
 
 std::string Verifier::profile_report() {
@@ -1676,6 +1762,26 @@ void Verifier::accumulate_profile(const unsigned long long* stamps) {
     ++prof_windows_;
 }
 
+// HYPERCORE_ADAPT_OVERLAP: hold this window's layer until the adaptive tier's copies into its slots have landed.
+// The wait is a spin on an atomic the copy stream's host functions raise (no driver call here); 20 s is the
+// window's own limit.
+bool Verifier::adapt_gate_wait(int32_t layer, std::string& err) {
+    if (adapt_gate_ == nullptr) return true;
+    const Clock::time_point t0 = Clock::now();
+    uint32_t spins = 0;
+    while (adapt_gate_->landed.load(std::memory_order_acquire) < layer) {
+        _mm_pause();
+        if ((++spins & 1023u) != 0) continue;
+        if (Clock::now() - t0 > std::chrono::seconds(20)) {
+            err = "verify: the adaptive tier's copies for layer " + std::to_string(layer) + " never landed" +
+                  released_note(release_gpu_waits(5000));
+            return false;
+        }
+    }
+    ms_gate += ms_since(t0);
+    return true;
+}
+
 bool Verifier::run(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn pool, void* user, int32_t* out,
                    std::string& err) {
     using namespace hypercore::kernels;
@@ -1709,6 +1815,10 @@ bool Verifier::run(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn pool,
     ms_host += ms_since(t0);
     VDBG("staged; launching\n");
     if (ar_on() && h_plan_err_ != nullptr) *(volatile uint32_t*) h_plan_err_ = 0;
+    // HYPERCORE_ADAPT_OVERLAP: with the all-resident graph the host serves no layer, so nothing can hold a layer
+    // back: every copy must have landed first.
+    if (adapt_gate_ != nullptr && adapt_gate_->active.load(std::memory_order_acquire) && ar_on() &&
+        !adapt_gate_wait((int32_t) g.n_layers, err)) return false;
     const cudaError_t le = cudaGraphLaunch(ar_off_ ? exec_nr_[T] : exec_[T], cs_);
     trace_ev("LAUNCHED", -1, -1, (int64_t) le);
     if (le != cudaSuccess) { err = std::string("verify: launch: ") + cudaGetErrorString(le); return false; }
@@ -1772,6 +1882,9 @@ bool Verifier::run(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn pool,
         const Clock::time_point b = Clock::now();
         if (g_trace) trace_ev("RANG", k, l, (int64_t) std::chrono::duration_cast<std::chrono::microseconds>(b - a).count());
         VDBG("layer %lld rang\n", (long long) l);
+        if (adapt_gate_ != nullptr && adapt_gate_->active.load(std::memory_order_acquire) && l >= 0 &&
+            (size_t) l < adapt_gate_->has.size() && adapt_gate_->has[(size_t) l] != 0 &&
+            !adapt_gate_wait((int32_t) l, err)) return false;
         cur_layer_ = want - 1;
         set_plan_slot(grp);
         const int tb = gtb[grp], n = gte[grp] - gtb[grp];
@@ -1823,6 +1936,7 @@ bool Verifier::run(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn pool,
     const cudaError_t se = cudaStreamSynchronize(cs_);
     trace_ev("SYNCED", -1, -1, (int64_t) se);
     if (se != cudaSuccess) { err = std::string("verify: ") + cudaGetErrorString(se); return false; }
+    note_nonfinite(T, pos0);   // #879: the window's head logits, checked on the device above
     if (ar_on() && h_plan_err_ != nullptr && *(volatile uint32_t*) h_plan_err_ != 0) {   // #871: refresh_ar saw the table whole
         *(volatile uint32_t*) h_plan_err_ = 0;
         err = "verify: the all-resident plan met an expert that is not in VRAM (the residency table changed during the window)";
