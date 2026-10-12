@@ -147,11 +147,11 @@ data/history/_old_topics/
 # Local tuning tooling and its measured results, not project source: the search
 # writes max_run_<model>.sh/.json at the root and a CSV per run under optuna_tune/results/.
 /optuna_tune/
-/max_run_*.sh
-/max_run_*.json
+max_run_*.sh
+max_run_*.json
 /optuna_tune/results/
-/max_run_*.pid
-/max_run_*.fifo
+max_run_*.pid
+max_run_*.fifo
 # The Optuna sweep's own session state, same class as .mcp_test_state.json.
 /.optuna_tune_state.json
 

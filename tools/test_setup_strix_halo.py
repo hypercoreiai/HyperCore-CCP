@@ -364,12 +364,15 @@ class WindowsZip(unittest.TestCase):
                   mock.patch.object(setup, "hip_runtime_beside_exe", lambda eng: None)):
             p.start()
             self.addCleanup(p.stop)
-        self.archs = ["gfx1100", "gfx1101", "gfx1102", "gfx1200", "gfx1201", "gfx1030"]      # the 0.1.39 zip
+        self.archs = ["gfx1100", "gfx1101", "gfx1102", "gfx1200", "gfx1201", "gfx1030"]      # a zip with no gfx1151
 
     def fake_download(self, url, dest, label=""):
         with zipfile.ZipFile(dest, "w") as z:
+            # A version that passes the setup's floor, so these tests exercise the arch check
+            # and not the version check. Derived from WIN_HIP_MIN_ENGINE so it cannot go stale.
             z.writestr("BUILD.json", json.dumps({"source": "prebuilt", "backend": "hip", "platform": "windows-x64",
-                                                  "version": "0.1.40", "archs": self.archs, "lib_dirs": []}))
+                                                  "version": ".".join(map(str, setup.WIN_HIP_MIN_ENGINE)),
+                                                  "archs": self.archs, "lib_dirs": []}))
             z.writestr(setup.EXE, "x")
 
     def halo(self):

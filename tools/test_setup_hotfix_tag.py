@@ -20,8 +20,12 @@ import setup  # noqa: E402
 
 class HotfixTag(unittest.TestCase):
     def test_a_four_part_version_is_read_as_its_first_three_numbers(self):
-        ver = tuple(int(x) for x in "0.1.40.1".split(".")[:3] if x.isdigit())
-        self.assertEqual(ver, (0, 1, 40))
+        # A hotfix tag on the version setup requires: the fourth number is ignored and the
+        # first three still satisfy MIN_ENGINE. Written from MIN_ENGINE, not a literal, so
+        # the test does not go stale when the required version moves.
+        tag = f"{'.'.join(map(str, setup.MIN_ENGINE))}.1"
+        ver = tuple(int(x) for x in tag.split(".")[:3] if x.isdigit())
+        self.assertEqual(ver, setup.MIN_ENGINE)
         self.assertGreaterEqual(ver, setup.MIN_ENGINE)
 
     def test_the_engine_zips_are_found_for_a_hotfix_tag(self):

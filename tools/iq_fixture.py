@@ -1,5 +1,5 @@
-"""tools/iq_fixture.py - deterministic i-quant fixtures for src/kernels/iq_parity.cpp (TODO 24).
-
+#!/home/ai-user0/black_box/.venv/bin/python
+"""
 For each of the ten types iq_parity tests, writes `<out>/<name>.bin` (int32 header: the KERNEL type id,
 rows, cols - then the raw GGUF block bytes) and `<out>/<name>.f32` (rows*cols float32 reference values,
 dequantized by the same library the comparison treats as ground truth):
