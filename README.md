@@ -1,6 +1,6 @@
 ![HyperCore — a large GGUF model running on low-spec consumer hardware](docs/media/header_readme.jpg)
 
-# HyperCore-CCP
+# HyperCore-CCP  (Currently being Developed on Linux on a RTX 40 Series and WSL for Windows)
 
 **Cuda, CPP, Python.** Big GGUF models on low-spec consumer hardware.
 
