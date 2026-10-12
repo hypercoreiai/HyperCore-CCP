@@ -72,7 +72,7 @@ def call(name: str, args: dict) -> dict:
                 assist.converse(
                     str(args.get("model") or ""),
                     args.get("messages") or [],
-                    int(args.get("max_tokens") or 512),
+                    int(args.get("max_tokens") or assist.ASSIST_DEFAULTS["max_tokens"]),
                 ),
                 indent=1,
             ))

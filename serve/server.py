@@ -3627,8 +3627,10 @@ def make_handler(svc: Service):
                 # requires: an install set up with a default key would otherwise 401 until
                 # someone typed the key into the Settings field.
                 if svc.api_key:
+                    # insert before the title, never over it: replacing "<title>" left a stray
+                    # "HyperCore" text node at the top of the page, above the banner
                     body = body.replace(b"<title>",
-                        ("<script>window.HYPERCORE_API_KEY = %s</script>" % json.dumps(svc.api_key)).encode(), 1)
+                        ("<script>window.HYPERCORE_API_KEY = %s</script>\n<title>" % json.dumps(svc.api_key)).encode(), 1)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -3799,7 +3801,7 @@ def make_handler(svc: Service):
                 if path == "/assist/chat":
                     model = str(req.get("model") or "").strip()
                     messages = req.get("messages") or []
-                    max_tokens = int(req.get("max_tokens") or 512)
+                    max_tokens = int(req.get("max_tokens") or assist.ASSIST_DEFAULTS["max_tokens"])
                     try:
                         self._json(200, assist.converse(model, messages, max_tokens))
                     except Exception as e:

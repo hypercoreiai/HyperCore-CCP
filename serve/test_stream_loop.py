@@ -167,6 +167,20 @@ class StreamReaderTest(unittest.TestCase):
         finally:
             sup.stop()
 
+    def test_a_dead_link_says_why_it_closed(self):
+        """The reason the reader recorded is carried into the exception, not dropped.
+        A 500 that only says "worker died mid-stream" cannot be traced to a cause."""
+        worker = ScriptedWorker(tokens=3, die_after=2)
+        sup = supervisor(worker)
+        try:
+            with self.assertRaises(WorkerUnreachable) as caught:
+                list(sup.stream([1, 2, 3, 4], max_new_tokens=3))
+            self.assertIn("link closed", str(caught.exception),
+                         "the reader's reason must reach the caller")
+            self.assertEqual(sup.in_flight(), 0)
+        finally:
+            sup.stop()
+
     def test_a_silent_stream_stalls_and_cancels(self):
         worker = ScriptedWorker(tokens=3, prefill_s=5.0)
         sup = supervisor(worker)

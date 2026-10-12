@@ -2220,6 +2220,10 @@ class WebApp(unittest.TestCase):
         body = self.get("/")[2]
         self.assertIn(b'window.HYPERCORE_API_KEY = "0000"', body)
         self.assertEqual(body.count(b"HYPERCORE_API_KEY"), 1)          # the page, not every <title>
+        # the injection must not eat the <title>: a swallowed tag leaves the page name as
+        # visible text above the banner
+        self.assertIn(b"<title>HyperCore</title>", body)
+        self.assertEqual(body.count(b"</title>"), 1)
         self.svc.api_key = 'a"b'                                       # a key with a quote stays one string
         self.assertIn(b'window.HYPERCORE_API_KEY = "a\\"b"', self.get("/")[2])
         self.svc.api_key = ""

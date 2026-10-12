@@ -682,7 +682,13 @@ class HyperCoreProcessSupervisor:
                     raise StreamStalled(f"no frame for {wait}s") from None
                 if tag is None:
                     link_dead = True
-                    raise WorkerUnreachable("worker died mid-stream")
+                    # The reader records why the link closed (EOF, a truncated payload,
+                    # a bad header). Carrying it here is the difference between a 500
+                    # that can be traced and one that cannot.
+                    why = frame_payload.get("error") if isinstance(frame_payload, dict) else None
+                    raise WorkerUnreachable(
+                        "worker died mid-stream" + (f": {why}" if why else "")
+                    )
                 self.last_frame_at = time.monotonic()
                 if tag == STREAM_TOKEN:
                     self.note_frame()

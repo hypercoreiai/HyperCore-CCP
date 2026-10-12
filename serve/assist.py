@@ -43,8 +43,9 @@ LOG_PATH = Path(os.environ.get("HYPERCORE_ASSIST_LOG") or PROJECT_ROOT / "serve"
 LOG_KEEP = int(os.environ.get("HYPERCORE_ASSIST_LOG_KEEP", "500"))   # lines kept; 0 turns the log off
 # The bridge's own defaults, kept separate from the local engine's run config on purpose: a local
 # temperature or context size means nothing to a hosted endpoint.
+# max_tokens 1024: the Assist tab clipped answers at 512 (finish_reason "length").
 ASSIST_DEFAULTS = {
-    "max_tokens": int(os.environ.get("HYPERCORE_ASSIST_MAX_TOKENS", "512")),
+    "max_tokens": int(os.environ.get("HYPERCORE_ASSIST_MAX_TOKENS", "1024")),
     "timeout_s": DEFAULT_TIMEOUT,
     "max_lag_s": DEFAULT_MAX_LAG,
 }
