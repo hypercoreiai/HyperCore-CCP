@@ -17,10 +17,15 @@ sys.path.insert(0, str(ROOT))
 
 from serve.mcp import DEFAULTS, hub_from_config, load_mcp_yaml
 from serve.mcp.web_mcp import (
+    Firefox,
+    call,
     encode_packet,
+    handle,
     public_http_url,
     read_packet,
+    text,
     unwrap_ddg,
+    firefox_bin,
 )
 
 
@@ -72,6 +77,80 @@ class Yaml(unittest.TestCase):
             hub = hub_from_config({"mcp_servers": {"web": {"command": "old"}}}, yaml_path=str(path))
             self.assertEqual(hub.servers["web"].cfg["command"], "python3")
             self.assertEqual(hub.settings["timeout_s"], 12.0)
+
+class ToolDispatch(unittest.TestCase):
+    """The tool layer without a browser: every path that can be reached without Firefox."""
+
+    def test_unknown_tool_is_a_tool_error_not_a_crash(self):
+        r = call("frobnicate", {})
+        self.assertTrue(r["isError"])
+        self.assertIn("unknown tool", r["content"][0]["text"])
+
+    def test_a_bad_url_is_reported_rather_than_raised(self):
+        r = call("browse", {"url": "file:///etc/passwd"})
+        self.assertTrue(r["isError"])
+        self.assertIn("http", r["content"][0]["text"].lower())
+
+    def test_an_empty_query_is_refused(self):
+        r = call("search", {"query": "   "})
+        self.assertTrue(r["isError"])
+        self.assertIn("query", r["content"][0]["text"])
+
+    def test_ping_and_an_unknown_method_follow_jsonrpc(self):
+        self.assertEqual(handle({"jsonrpc": "2.0", "id": 1, "method": "ping"})["result"], {})
+        err = handle({"jsonrpc": "2.0", "id": 2, "method": "does/not/exist"})
+        self.assertEqual(err["error"]["code"], -32601)
+        self.assertIsNone(handle({"jsonrpc": "2.0", "method": "ping"}))   # a notification gets no reply
+
+    def test_text_builds_a_content_block(self):
+        self.assertEqual(text("hi"), {"content": [{"type": "text", "text": "hi"}], "isError": False})
+        self.assertTrue(text("hi", error=True)["isError"])
+
+
+class BrowserLifecycle(unittest.TestCase):
+    """The Firefox side, run against the headless Firefox this install has.
+
+    Skipped where there is no Firefox, so the suite still runs on a machine without one.
+    """
+
+    def setUp(self):
+        if not firefox_bin():
+            self.skipTest("no Firefox installed on this machine")
+        self.browser = Firefox()
+
+    def tearDown(self):
+        self.browser.close()
+
+    def test_status_before_start_says_not_started(self):
+        self.assertEqual(self.browser.status()["firefox"], "not started")
+        self.assertFalse(self.browser.running())
+
+    def test_open_runs_a_script_and_reports_the_url(self):
+        self.browser._open("about:blank")
+        self.assertTrue(self.browser.running())
+        self.assertEqual(self.browser._script("return 1 + 1;"), 2)
+        self.assertEqual(self.browser.status()["firefox"], "running")
+
+    def test_a_private_page_is_refused_and_recorded_as_the_last_error(self):
+        with self.assertRaises(ValueError):
+            self.browser._open("http://127.0.0.1/x")
+        self.assertTrue(self.browser.last_error)
+
+    def test_close_stops_the_process_and_removes_the_profile(self):
+        self.browser._open("about:blank")
+        profile = self.browser.profile
+        self.browser.close()
+        self.assertFalse(self.browser.running())
+        self.assertIsNone(self.browser.sock)
+        self.assertEqual(self.browser.status()["firefox"], "not started")
+        self.assertFalse(Path(profile).exists())
+
+    def test_a_second_open_reuses_the_same_browser(self):
+        self.browser._open("about:blank")
+        first = self.browser.proc.pid
+        self.browser._open("about:blank")
+        self.assertEqual(self.browser.proc.pid, first)
+
 
 class Stdio(unittest.TestCase):
     def test_lists_status_search_and_browse(self):

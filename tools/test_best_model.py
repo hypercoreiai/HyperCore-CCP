@@ -3,7 +3,8 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# best_model.py lives in tune/, beside the tuner it belongs to
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tune"))
 import best_model
 
 

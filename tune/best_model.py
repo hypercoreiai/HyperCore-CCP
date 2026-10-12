@@ -28,7 +28,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent
+# best_model.py lives in tune/, but the MODELS table it reads is in setup.py at the project root.
+ROOT = Path(__file__).resolve().parents[1]
 SETUP = ROOT / "setup.py"
 
 # Quality tiers, from the same descriptions setup.py carries: more bits and more experts

@@ -167,13 +167,20 @@ class TelemetryFdStability(unittest.TestCase):
 
     ITERATIONS = 400
 
-    def _open_fds(self) -> set[str]:
-        """Which descriptors this process currently holds open."""
+    def _open_fds(self) -> dict[str, str]:
+        """Descriptor number to what it points at, for this process."""
         try:
-            return set(os.listdir(f"/proc/{os.getpid()}/fd"))
+            fd_dir = f"/proc/{os.getpid()}/fd"
+            out = {}
+            for fd in os.listdir(fd_dir):
+                try:
+                    out[fd] = os.readlink(os.path.join(fd_dir, fd))
+                except OSError:
+                    out[fd] = ""
+            return out
         except OSError:
             self.skipTest("no /proc/self/fd on this platform")
-            return set()
+            return {}
 
     def test_repeated_sampling_does_not_leak_descriptors(self) -> None:
         """400 sampling ticks must not open a descriptor that stays open.
@@ -181,6 +188,11 @@ class TelemetryFdStability(unittest.TestCase):
         The comparison is on the set of descriptors, not the count: another test in the same
         process can close one of its own between the two reads, and a count would then read as
         a leak when nothing here opened anything.
+
+        Only descriptors pointing at the files telemetry reads are counted. In a full-suite run a
+        background thread from another test (an MCP server, an engine subprocess) can open a
+        descriptor during the ticks, and blaming that on telemetry is a false positive. The
+        unrelated descriptor is still named in the message so it can be tracked down.
         """
         if not os.path.exists("/proc/stat"):
             self.skipTest("no /proc on this platform")
@@ -190,10 +202,15 @@ class TelemetryFdStability(unittest.TestCase):
             telemetry._cpu_name()
             fallback._times()
             telemetry._CpuRamFallback.ram()
-        leaked = sorted(self._open_fds() - before)
+        after = self._open_fds()
+        opened = sorted(fd for fd in after if fd not in before)
+        mine = [fd for fd in opened if after[fd].startswith("/proc")]
+        other = [f"{fd} -> {after[fd]}" for fd in opened if not after[fd].startswith("/proc")]
         self.assertFalse(
-            leaked,
-            f"{len(leaked)} descriptor(s) left open after {self.ITERATIONS} ticks: {leaked}",
+            mine,
+            f"{len(mine)} descriptor(s) left open by telemetry after {self.ITERATIONS} ticks: "
+            f"{[(fd, after[fd]) for fd in mine]}"
+            + (f" (unrelated descriptors also opened: {', '.join(other)})" if other else ""),
         )
 
 
