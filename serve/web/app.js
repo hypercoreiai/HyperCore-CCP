@@ -71,6 +71,134 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
   if (!saved) setTheme(e.matches ? "dark" : "light", false);
 });
 
+// ------------------------------------------------------------------ surface (page background)
+// The Sampling drawer's Surface slider walks the page background along one continuous metallic
+// ramp: pure white, polished chrome, brushed silver, matte onyx. The ramp is sampled at the
+// slider position and every token the kit uses (background, panels, lines, ink) is derived from
+// that sample, so the UI stays readable at both ends. Piecewise-linear interpolation over nine
+// anchors is what keeps the walk free of banding; the sheen layers in app.css sit on top of the
+// sampled colour and peak in the metallic middle.
+// The slider is a browser-local setting: it is stored in localStorage and never sent to the
+// server, so it does not touch sampling or any other app's defaults.
+const METAL_STOPS = [
+  [0.00, [255, 255, 255]],   // pure white
+  [0.12, [238, 241, 243]],   // white, lit
+  [0.24, [223, 227, 231]],   // polished chrome, specular
+  [0.36, [207, 212, 216]],   // chrome
+  [0.48, [182, 188, 194]],   // brushed silver
+  [0.60, [158, 163, 168]],   // silver, deeper
+  [0.72, [120, 125, 130]],   // graphite
+  [0.84, [72, 77, 82]],      // near onyx
+  [1.00, [20, 23, 26]],      // matte onyx black
+];
+const DARK_INK = [34, 30, 31];    // tokens.css --st-ink, light theme
+const LIGHT_INK = [238, 241, 243]; // tokens.css --st-ink, dark theme
+
+const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+const mixRGB = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+const lum = (c) => (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+const hex = (c) => "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("");
+// WCAG contrast, so legibility is a number rather than an opinion
+const srgb = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+const relLum = (c) => 0.2126 * srgb(c[0]) + 0.7152 * srgb(c[1]) + 0.0722 * srgb(c[2]);
+const contrast = (a, b) => { const l1 = relLum(a), l2 = relLum(b); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); };
+
+// the most muted version of an ink that still clears `min` contrast against the panel
+function soften(ink, surface, min) {
+  let out = ink.slice();
+  for (let t = 0.05; t <= 0.60; t += 0.05) {
+    const c = mixRGB(ink, surface, t);
+    if (contrast(c, surface) >= min) out = c; else break;
+  }
+  return out;
+}
+
+// the ramp at t (0..1), clamped: linear between the anchors, no gaps
+function metalColor(t) {
+  const x = clamp01(Number(t) || 0);
+  for (let i = 1; i < METAL_STOPS.length; i++) {
+    if (x <= METAL_STOPS[i][0]) {
+      const [t0, c0] = METAL_STOPS[i - 1];
+      const [t1, c1] = METAL_STOPS[i];
+      return mixRGB(c0, c1, (x - t0) / (t1 - t0));
+    }
+  }
+  return METAL_STOPS[METAL_STOPS.length - 1][1].slice();
+}
+
+// pos is the slider value, 0..100. Everything the page is painted with, from that one number.
+function metalPalette(pos) {
+  const t = clamp01((Number(pos) || 0) / 100);
+  const base = metalColor(t);
+  const baseLum = lum(base);
+  // panels sit above the surface. The lift falls off smoothly as the surface darkens, so the
+  // metallic middle keeps depth instead of going flat, and there is no step where it flips.
+  const lift = 0.10 + 0.50 * clamp01((baseLum - 0.35) / 0.30);
+  const surface = mixRGB(base, [255, 255, 255], lift);
+  // the ink is whichever theme ink reads better on that panel; if a mid-tone panel is too flat
+  // for either, fall back to pure black or pure white, which always clears 4.5:1
+  let ink = contrast(DARK_INK, surface) >= contrast(LIGHT_INK, surface) ? DARK_INK.slice() : LIGHT_INK.slice();
+  if (contrast(ink, surface) < 4.5) ink = relLum(surface) > 0.18 ? [0, 0, 0] : [255, 255, 255];
+  const towardsDark = baseLum > 0.5 ? [0, 0, 0] : [255, 255, 255];
+  return {
+    pos: Math.round(t * 100),
+    bg: hex(base),
+    surface: hex(surface),
+    surface2: hex(mixRGB(surface, base, 0.45)),
+    line: hex(mixRGB(base, towardsDark, 0.22)),
+    lineSoft: hex(mixRGB(base, towardsDark, 0.12)),
+    ink: hex(ink),
+    inkSoft: hex(soften(ink, surface, 4.5)),
+    inkMuted: hex(soften(ink, surface, 3.0)),
+    // the specular highlight is strongest in the metallic middle and gone at the two flat ends
+    sheen: Math.max(0, 1 - Math.abs(t - 0.5) / 0.5),
+  };
+}
+
+const SURFACE_NAMES = (p) => (p === 0 ? "default" : p <= 35 ? "polished chrome" : p <= 65 ? "brushed silver"
+  : p >= 90 ? "onyx black" : "graphite");
+
+function applySurface(pos) {
+  const p = metalPalette(pos);
+  const root = document.documentElement;
+  if (p.pos === 0) {                       // the untouched theme: no override at all
+    root.dataset.surface = "flat";
+    for (const k of ["--st-bg", "--st-surface", "--st-surface-2", "--st-line", "--st-line-soft",
+                     "--st-ink", "--st-ink-soft", "--st-ink-muted", "--st-metal-spec",
+                     "--st-metal-streak", "--st-metal-top", "--st-surface-pos"])
+      root.style.removeProperty(k);
+  } else {
+    root.dataset.surface = "metal";
+    root.style.setProperty("--st-surface-pos", String(p.pos));
+    root.style.setProperty("--st-bg", p.bg);
+    root.style.setProperty("--st-surface", p.surface);
+    root.style.setProperty("--st-surface-2", p.surface2);
+    root.style.setProperty("--st-line", p.line);
+    root.style.setProperty("--st-line-soft", p.lineSoft);
+    root.style.setProperty("--st-ink", p.ink);
+    root.style.setProperty("--st-ink-soft", p.inkSoft);
+    root.style.setProperty("--st-ink-muted", p.inkMuted);
+    root.style.setProperty("--st-metal-spec", `rgba(255,255,255,${(0.30 * p.sheen).toFixed(3)})`);
+    root.style.setProperty("--st-metal-streak", `rgba(255,255,255,${(0.07 * p.sheen).toFixed(3)})`);
+    root.style.setProperty("--st-metal-top", `rgba(255,255,255,${(0.10 * p.sheen).toFixed(3)})`);
+  }
+  const out = $("o-surface");
+  if (out) out.textContent = SURFACE_NAMES(p.pos);
+  return p;
+}
+
+function setSurface(pos, save = true) {
+  const p = applySurface(pos);
+  if (save) store.set("surface", p.pos);
+  return p;
+}
+
+$("s-surface").oninput = (e) => setSurface(e.target.value);
+const savedSurface = store.get("surface", 0);
+$("s-surface").value = savedSurface;
+applySurface(savedSurface);
+
+
 // ------------------------------------------------------------------ shut down
 // The red button in the banner. Two clicks on purpose: the first arms it, the second
 // stops the server, so a stray click cannot end a model that is mid-request.
@@ -1665,7 +1793,6 @@ async function sendAssist() {
       body: JSON.stringify({
         model,
         messages: assistMessages.filter((m) => m.role === "user" || m.text),
-        max_tokens: 512,
       }),
     });
     const data = await r.json();

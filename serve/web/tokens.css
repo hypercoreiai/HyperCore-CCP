@@ -53,6 +53,20 @@
   --st-sh-bar:0 54px 21px rgba(0,0,0,.01),0 30px 18px rgba(0,0,0,.03),0 13px 13px rgba(0,0,0,.05),0 3px 7px rgba(0,0,0,.06);
   --st-sh-pop:0 10px 40px rgba(15,23,42,.08),0 1px 3px rgba(15,23,42,.06);
   color-scheme:light;
+
+  /* metallic surface ramp (derived). The Sampling drawer's Surface slider walks this range:
+     pure white on the left, polished chrome and brushed silver in the middle, matte onyx on
+     the right. app.js samples the ramp at the slider position and rewrites --st-bg, --st-surface,
+     --st-line and --st-ink from the sample; the anchors here are only the slider's own track. */
+  --st-metal-white:#ffffff;
+  --st-metal-chrome:#cfd4d8;
+  --st-metal-silver:#b6bcc2;
+  --st-metal-graphite:#787d83;
+  --st-metal-onyx:#14171a;
+  --st-surface-pos:0;        /* 0 = white, 50 = chrome/silver, 100 = onyx */
+  --st-metal-spec:rgba(255,255,255,0);      /* specular band, peaks in the metallic middle */
+  --st-metal-streak:rgba(255,255,255,0);    /* anisotropic micro-brush streaks */
+  --st-metal-top:rgba(255,255,255,0);       /* soft vertical falloff for depth */
 }
 
 /* color — dark (all derived) */

@@ -132,5 +132,38 @@ class AssistModelPicker(unittest.TestCase):
         self.assertIn("the endpoint does not serve are not listed", body)
 
 
+class SurfaceSlider(unittest.TestCase):
+    """The Surface slider in the Sampling drawer. The palette maths is exercised in
+    serve/web/test_surface_slider.js; these are the contract tests on the shipped files."""
+
+    CSS = (ROOT / "serve" / "web" / "app.css").read_text(encoding="utf-8")
+    TOKENS = (ROOT / "serve" / "web" / "tokens.css").read_text(encoding="utf-8")
+
+    def test_the_drawer_carries_the_slider(self):
+        for el in ("s-surface", "o-surface"):
+            self.assertIn(f'id="{el}"', PAGE)
+        self.assertIn('class="st-slider st-slider--metal" type="range"', PAGE)
+        self.assertIn('min="0" max="100" step="1"', PAGE)
+
+    def test_the_slider_walks_the_metallic_range(self):
+        for anchor in ("--st-metal-white:#ffffff", "--st-metal-chrome:#cfd4d8",
+                       "--st-metal-silver:#b6bcc2", "--st-metal-graphite:#787d83",
+                       "--st-metal-onyx:#14171a"):
+            self.assertIn(anchor, self.TOKENS)
+        self.assertIn(".st-slider--metal {", self.CSS)
+
+    def test_the_background_is_painted_from_the_sampled_colour(self):
+        self.assertIn('body[data-surface="metal"] {', self.CSS)
+        for layer in ("--st-metal-spec", "--st-metal-streak", "--st-metal-top", "var(--st-bg)"):
+            self.assertIn(layer, self.CSS)
+
+    def test_the_palette_is_derived_from_one_position_and_stays_local(self):
+        for line in ("function metalPalette(pos) {", "function metalColor(t) {",
+                     'root.dataset.surface = "metal";', 'store.set("surface", p.pos)',
+                     'const savedSurface = store.get("surface", 0);'):
+            self.assertIn(line, APP)
+        self.assertNotIn("surface", APP[APP.find("function sharedDefaults"):APP.find("async function saveShared")])
+
+
 if __name__ == "__main__":
     unittest.main()

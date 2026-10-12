@@ -285,6 +285,12 @@
       <label class="st-label" for="s-seed">Seed <output>empty = random</output></label>
       <input class="st-input" id="s-seed" type="number" min="1" step="1" placeholder="Random">
     </div>
+    <div class="st-field">
+      <label class="st-label" for="s-surface">Surface <output id="o-surface"></output></label>
+      <input class="st-slider st-slider--metal" type="range" id="s-surface" min="0" max="100" step="1" value="0"
+             aria-label="Background surface, from white to onyx black">
+      <span class="muted small">white &rarr; polished chrome &rarr; brushed silver &rarr; matte onyx. Kept in this browser.</span>
+    </div>
     <div class="toggle-row"><span>Show thinking<br><span class="muted small">expanded while it streams</span></span>
       <button class="st-toggle" id="s-show" role="switch" aria-checked="true" aria-label="Show thinking"></button></div>
     <div class="toggle-row" id="mcp-row" hidden><span>Use tools from MCP servers<br><span class="muted small"

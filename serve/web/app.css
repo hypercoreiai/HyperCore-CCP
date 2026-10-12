@@ -208,6 +208,25 @@ main { flex: 1; min-height: 0; display: flex; }
 .st-toast { animation: toast-in 180ms var(--st-ease); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 
+/* ---------------------------------------------------------------- surface (the Sampling drawer's slider)
+   The page background is sampled from the metallic ramp in tokens.css at the slider position.
+   app.js writes --st-bg, --st-surface, --st-line and --st-ink from that sample, so panels and
+   text move with the surface and stay legible at both ends. The background is never a flat fill:
+   a specular band, anisotropic streaks and a soft vertical falloff sit on top of the sampled
+   colour, which is what gives the sheen and keeps the walk free of banding. */
+body[data-surface="metal"] {
+  background:
+    linear-gradient(90deg, transparent 38%, var(--st-metal-spec) 50%, transparent 62%),
+    repeating-linear-gradient(90deg, var(--st-metal-streak) 0 1px, transparent 1px 7px),
+    linear-gradient(180deg, var(--st-metal-top), transparent 60%),
+    var(--st-bg);
+}
+/* the slider's own track is the range it controls */
+.st-slider--metal { height: 34px; border-radius: var(--st-r-pill);
+  background: linear-gradient(90deg, var(--st-metal-white) 0%, var(--st-metal-chrome) 30%,
+                              var(--st-metal-silver) 50%, var(--st-metal-graphite) 72%, var(--st-metal-onyx) 100%);
+  accent-color: var(--st-metal-silver); }
+
 /* ---------------------------------------------------------------- narrow screens */
 @media (max-width: 1000px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
