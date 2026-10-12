@@ -649,7 +649,18 @@ class HyperCoreProcessSupervisor:
                 link_dead = True
                 raise WorkerUnreachable("link closed before the request was sent")
 
-            item = frames.get(timeout=timeout_s)
+            try:
+                item = frames.get(timeout=timeout_s)
+            except queue.Empty:
+                # The same rule as the frame loop below: a link that answers a ping is
+                # slow, a link that does not is gone. Without this guard an ack timeout
+                # escapes as a bare queue.Empty, which the server turns into a 500 with
+                # no cause - the one case where "the worker never answered" is exactly
+                # the answer the caller needs.
+                if not self.ping():
+                    link_dead = True
+                    raise WorkerUnreachable("worker never acknowledged the request") from None
+                raise StreamStalled(f"no ack for {timeout_s}s") from None
             if item[0] is None:
                 link_dead = True
                 raise WorkerUnreachable("worker died while scheduling the request")

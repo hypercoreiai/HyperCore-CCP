@@ -13,7 +13,7 @@ import time
 import unittest
 
 from serve.frame_fixture import ScriptedWorker
-from serve.hypercore_supervisor import HyperCoreProcessSupervisor, WorkerUnreachable
+from serve.hypercore_supervisor import HyperCoreProcessSupervisor, StreamStalled, WorkerUnreachable
 
 
 class FatalRecoveryTest(unittest.TestCase):
@@ -94,6 +94,30 @@ class FatalRecoveryTest(unittest.TestCase):
             with self.assertRaises(WorkerUnreachable):
                 list(sup.stream([1, 2, 3, 4], max_new_tokens=1, timeout_s=2.0))
             self.assertEqual(len(worker.received), before, "no request is sent on a dead link")
+        finally:
+            sup.stop()
+
+    def test_an_ack_that_never_arrives_is_a_typed_error_not_a_queue_empty(self):
+        """A link that is up but never schedules must not leak queue.Empty.
+
+        The ack wait had no guard, so a worker that stayed open and never answered
+        raised the bare queue exception. The caller then sees a 500 with no cause.
+        The supervisor tests the link out-of-band first: a worker that answers a ping
+        is stalled, a worker that does not is unreachable.
+        """
+        alive = ScriptedWorker(max_slots=1, tokens=1, mute_submit=True)
+        sup = self._supervisor(alive, max_restarts=0)
+        try:
+            with self.assertRaises(StreamStalled):
+                list(sup.stream([1, 2, 3, 4], max_new_tokens=1, timeout_s=0.3))
+        finally:
+            sup.stop()
+
+        gone = ScriptedWorker(max_slots=1, tokens=1, mute_submit=True, mute_ping=True)
+        sup = self._supervisor(gone, max_restarts=0)
+        try:
+            with self.assertRaises(WorkerUnreachable):
+                list(sup.stream([1, 2, 3, 4], max_new_tokens=1, timeout_s=0.3))
         finally:
             sup.stop()
 

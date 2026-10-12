@@ -59,6 +59,8 @@ class ScriptedWorker:
     `die_after` kills the link after that many frames, standing in for an engine fault.
     `mute_ping` answers no ping, standing in for a worker that is alive but
     not serving - the distinction the supervisor has to make without a heartbeat frame.
+    `mute_submit` answers no ack to a request at all, standing in for a worker that is
+    up but never schedules: the case the ack timeout has to tell apart from a dead link.
     """
 
     def __init__(
@@ -71,6 +73,7 @@ class ScriptedWorker:
         draft_s: float = 0.0,
         die_after: int | None = None,
         mute_ping: bool = False,
+        mute_submit: bool = False,
         backend: int = 0,
         max_context: int = 4096,
         pool_workers: int = 4,
@@ -100,6 +103,7 @@ class ScriptedWorker:
         self.draft_s = draft_s
         self.die_after = die_after
         self.mute_ping = mute_ping
+        self.mute_submit = mute_submit
         self.backend = backend
         self.max_context = max_context
         self.pool_workers = pool_workers
@@ -242,6 +246,12 @@ class ScriptedWorker:
             self._send(RESP_STATUS, request_id, struct.pack("<i", -2))  # BUSY
             return
         self.in_flight += 1
+        if self.mute_submit:
+            # Stay open and stay silent: the request is accepted by the socket but never
+            # acknowledged, so the supervisor's ack timeout is the only thing it sees.
+            time.sleep(0.5)
+            self.in_flight -= 1
+            return
         self._send(RESP_STATUS, request_id, struct.pack("<i", 0))
         # A real worker runs each request on its own engine thread. The mock has to do the
         # same or "saturated slot" cannot be observed: a single-threaded mock finishes the
