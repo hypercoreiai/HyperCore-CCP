@@ -141,3 +141,39 @@ htmlcov/
 # the scrubber existed; they are kept locally for reference only.
 data/history/_old_chats/
 data/history/_old_topics/
+
+# ----------------------------------------------------------------------
+# optuna_tune: the Bayesian (Optuna) sweep and everything it generates.
+# Local tuning tooling and its measured results, not project source: the search
+# writes max_run_<model>.sh/.json at the root and a CSV per run under optuna_tune/results/.
+/optuna_tune/
+/max_run_*.sh
+/max_run_*.json
+/optuna_tune/results/
+/max_run_*.pid
+/max_run_*.fifo
+# The Optuna sweep's own session state, same class as .mcp_test_state.json.
+/.optuna_tune_state.json
+
+# ----------------------------------------------------------------------
+# Run scripts and configs setup.py writes on the user's machine. Same class as
+# max_run_*: they describe this install's model and flags, not the project.
+/ni_*.sh
+/ni_*.json
+/_max_run_*.sh
+/_max_run_*.json
+/[0-9]*_max_run_*.sh
+/[0-9]*_max_run_*.json
+
+# The model directory is a symlink to the downloaded pack, outside the repo.
+/Q2_0
+
+# Tuning harness output: logs and per-run results, regenerated on every sweep.
+/tune/*.log
+/tune/results/
+/tune/__pycache__/
+
+# Local scan and calibration state, same class as .mcp_test_state.json.
+/.calibrate_result.json
+/.calibrate_progress.log
+/.blackbox_scan_state.json
