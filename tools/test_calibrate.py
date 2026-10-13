@@ -14,6 +14,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -435,6 +436,121 @@ class MeasurementWindow(unittest.TestCase):
     def test_a_stream_that_produced_nothing_measures_zero(self):
         s = CAL.Session(self.Engine(4, 0.0, 0.01), [[1] * 4])
         self.assertEqual(s.rate(), 0.0)
+
+
+class CalibrateScope(unittest.TestCase):
+    """#2036: `--calibrate --model X` tunes that installed model, an uninstalled one is an error, and a
+    `--calibrate` that cannot run is named instead of dropped.  No GPU, no engine: only the config files."""
+
+    def setUp(self):
+        import setup as S
+        self.S = S
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        for name in ("hypercore-q2_0.json", "hypercore-swift-iq2_xs.json"):
+            (self.dir / name).write_text(json.dumps({"exe": "x", "args": list(BASE), "model_name": name}),
+                                        encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def cfgs(self):
+        return sorted(self.dir.glob("hypercore-*.json"))
+
+    def test_no_names_means_every_installed_model(self):
+        self.assertEqual(self.S.calibration_targets(self.cfgs(), None, None), self.cfgs())
+
+    def test_a_model_names_only_itself(self):
+        self.assertEqual([c.name for c in self.S.calibration_targets(self.cfgs(), "Q2_0", None)],
+                        ["hypercore-q2_0.json"])
+
+    def test_a_family_names_its_own_configs(self):
+        self.assertEqual([c.name for c in self.S.calibration_targets(self.cfgs(), None, "swift")],
+                        ["hypercore-swift-iq2_xs.json"])
+
+    def test_a_model_that_is_not_installed_selects_nothing(self):
+        self.assertEqual(self.S.calibration_targets(self.cfgs(), "Q4_K_M", None), [])
+
+    def test_calibrate_next_to_a_model_is_named(self):
+        ok = SimpleNamespace(calibrate=True, setup=False, check=False)
+        self.assertIsNone(self.S.calibrate_notice(ok, self.cfgs()))
+        self.assertIsNone(self.S.calibrate_notice(SimpleNamespace(calibrate=True, setup=False, check=False,
+                                                                model="Q2_0", family=None), self.cfgs()))
+        self.assertEqual(self.S.calibrate_notice(SimpleNamespace(calibrate=True, setup=True, check=False),
+                                                self.cfgs()), "--setup")
+        self.assertEqual(self.S.calibrate_notice(SimpleNamespace(calibrate=True, setup=False, check=True),
+                                                self.cfgs()), "--check")
+        self.assertEqual(self.S.calibrate_notice(ok, []), "no model is installed yet")
+        self.assertIsNone(self.S.calibrate_notice(SimpleNamespace(calibrate=False, setup=True, check=False),
+                                                 self.cfgs()))
+
+    def test_the_benchmark_offer_and_its_entry_points_exist(self):
+        src = (ROOT / "setup.py").read_text(encoding="utf-8")
+        self.assertIn("Run a quick benchmark now?", src)
+        self.assertIn('"tools" / "hypercore_bench.py"', src)
+        self.assertTrue((ROOT / "bench.sh").is_file() and (ROOT / "BENCH.bat").is_file())
+        self.assertIn("hypercore_bench.py", (ROOT / "bench.sh").read_text(encoding="utf-8"))
+
+    def run_main(self, argv, calibrate_config=None):
+        """setup.main() with the PC, the model files and the engine stubbed out: only the --calibrate branch runs.
+        `calibrate_config` replaces setup's tuning call so a test can see which config was picked."""
+        import contextlib
+        import io
+        import sys
+        S = self.S
+        names = ("data_folder", "installed_configs", "update_installed_engine", "calibrate_config",
+                 "start", "start_gpus")
+        saved = {n: getattr(S, n) for n in names}
+        try:
+            S.data_folder = lambda d: (Path(self.tmp.name) / "data", [])
+            S.installed_configs = lambda: self.cfgs()
+            S.update_installed_engine = lambda prebuilt: None
+            S.start_gpus = lambda g: None
+            S.calibrate_config = calibrate_config or (lambda p: True)
+            S.start = lambda cfg, port, *rest, **kw: 0
+            old_argv, sys.argv = sys.argv, ["setup.py", *argv]
+            out = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out):
+                    code = S.main()
+            except SystemExit as e:
+                code = e.code if isinstance(e.code, int) else 1
+            finally:
+                sys.argv = old_argv
+            return code, out.getvalue()
+        finally:
+            for n, v in saved.items():
+                setattr(S, n, v)
+
+    def test_calibrate_of_a_model_that_is_not_installed_stops_with_a_name(self):
+        code, out = self.run_main(["--calibrate", "--model", "IQ3_S"])
+        self.assertEqual(code, 1, "an uninstalled model is an error, not a silent start")
+        self.assertIn("--calibrate: IQ3_S is not installed", out)
+        self.assertIn("Q2_0", out, "the message lists what is installed")
+
+    def test_calibrate_next_to_a_check_is_said_and_not_dropped(self):
+        code, out = self.run_main(["--calibrate", "--check"])
+        self.assertIn("--calibrate does nothing with --check", out)
+        self.assertEqual(code, 0)
+
+    def test_calibrate_scoped_to_one_model_tunes_only_that_config(self):
+        picked = []
+        code, _ = self.run_main(["--calibrate", "--model", "Q2_0", "--no-start"],
+                                lambda p: picked.append(p.name) or True)
+        self.assertEqual(code, 0)
+        self.assertEqual(picked, ["hypercore-q2_0.json"])
+
+    def test_calibrate_without_names_asks_which_of_the_installed_models(self):
+        S = self.S
+        picked, asked = [], []
+        old_ask, S.ask = S.ask, (lambda q, choices, default, yes: asked.append(q) or choices[int(default) - 1])
+        try:
+            code, _ = self.run_main(["--calibrate", "--no-start"], lambda p: picked.append(p.name) or True)
+        finally:
+            S.ask = old_ask
+        self.assertEqual(code, 0)
+        self.assertEqual(asked, ["Tune which one?"])
+        self.assertEqual(picked, ["hypercore-q2_0.json"])   # choice 1: the first listed config
 
 
 if __name__ == "__main__":

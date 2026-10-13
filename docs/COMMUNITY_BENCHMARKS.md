@@ -3,6 +3,7 @@
 Share measurements from your own hardware so other users can judge how HyperCore
 might run on a similar machine. This guide suggests a report format and a pull
 request workflow; a single model, GPU, or context length is enough to contribute.
+The quickest way is the built-in benchmark: [`BENCH.bat` / `./bench.sh`](#run-the-benchmark) writes a report in this format.
 
 Existing [benchmark reports](../bench/results/) provide examples. The
 [engine 0.1.26 speed report](../bench/results/2026-09-29-speed-0126/README.md)
@@ -21,6 +22,34 @@ and their limits. Report what you actually measured and label estimates separate
 - [2026-10-04: 2x Intel Arc Pro B60 24 GB, Ryzen 5 5600, 64 GB RAM](../bench/results/2026-10-04-community-2x-arc-pro-b60/README.md):
   the SYCL port at `6f32ec0` with two fixes, Coder IQ1_M and Flash-Next IQ2_XS, 8,192-token context, layer split across both cards;
   short prompts and 2K-token prompts, plus one run on a single B60. Intel's SYCL engine, no 4,096/32,768/128,000-token sweep.
+
+## Run the benchmark
+
+The simplest report is one command after setup. Windows: double-click `BENCH.bat`. Linux: `./bench.sh`. Or
+`python tools/hypercore_bench.py` from the HyperCore folder. Setup also offers it at the end of an interactive install
+(default no).
+
+It starts the model with the settings you already have (the newest `hypercore-*.json`; `--config FILE` picks another one),
+or uses a HyperCore server that is already running on that port (`--url http://127.0.0.1:8081` for another address). It
+then sends a fixed suite through the HTTP API, three runs each, and reports medians with ranges: chat (three short
+questions), a fresh 4K and 16K prompt, and a five-turn agent session that measures how much of the conversation the
+cache reused. `--clients N` sends N requests at once, `--long` adds a 32,768-token prompt. Speeds are the engine's own
+timings (`prompt_per_second`, `predicted_per_second` in the answer); first-token time and latency are measured by the
+client. Thinking is off for the suite so the answers are short and the runs comparable (`--think` leaves it on).
+
+The result goes to `bench/results/<date>-community-<gpu>-<model>/` (or `--out DIR`): a `README.md` in the format below,
+`results.json` with every request, and an `engine-log-excerpt.txt`. Home folders, user and host names, local network
+addresses and API keys are replaced by placeholders before anything is written; read the report once before sharing it.
+
+To compare with an earlier run on the same machine:
+
+```bash
+python tools/hypercore_bench.py --compare bench/results/2026-10-01-community-rtx-3060-qwen3-8-flash-next
+python tools/hypercore_bench.py --compare OLD_FOLDER --compare-only NEW_FOLDER   # two saved runs, nothing is started
+```
+
+The tool is a speed check, not a quality test. For recall and other checks, see [Optional correctness
+checks](#optional-correctness-checks); for A/B tests of two builds use `tools/ab_engine.py`.
 
 ## What to record
 

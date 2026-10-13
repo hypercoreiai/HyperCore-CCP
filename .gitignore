@@ -177,3 +177,13 @@ max_run_*.fifo
 /.calibrate_result.json
 /.calibrate_progress.log
 /.blackbox_scan_state.json
+/.verify_all_tests_state.json
+
+# verify_all_tests.sh transcripts: every run writes a new one under bench/results/verify-<date>/
+# and compares it with the previous one, so they are working output, not source.
+bench/results/verify-*/
+bench/results/verify-*.log
+bench/results/verify-*.json
+
+# Local scratch for probes and patches.
+/scratch/
