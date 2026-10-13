@@ -207,7 +207,7 @@ applySurface(savedSurface);
 // plain Python - no signals, no process scanning - so it behaves the same on Windows.
 // POST /v1/stop and POST /v1/start (the engine only, the server stays up) still exist for
 // the API and the Monitor; this button does not use them.
-const RESUME_PROMPT = "Complete and open tasks";   // what the composer's Start button asks for
+const RESUME_PROMPT = "Complete the open tasks";   // what the composer's Start button asks for
 let shuttingDown = false, armed = false;
 const SHUTDOWN_TITLE = "Shut down HyperCore: stop the model, the MCP servers and the image encoder, then close this server";
 function disarmShutdown() {

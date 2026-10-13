@@ -179,7 +179,7 @@ class StopStartPair(unittest.TestCase):
     def test_the_composer_button_has_a_start_state(self):
         for el in ("stop-btn", "stop-icon", "stop-text"):
             self.assertIn(f'id="{el}"', PAGE)
-        for line in ('const RESUME_PROMPT = "Complete and open tasks";',
+        for line in ('const RESUME_PROMPT = "Complete the open tasks";',
                      "function paintStopButton(mode) {",
                      'btn.dataset.mode = mode;',
                      'web/sprite.svg#i-bolt',

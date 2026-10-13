@@ -78,8 +78,8 @@ function check(name, cond, detail) {
 async function main() {
 
 // ---- what the page is built with ------------------------------------------
-check("the resume prompt is 'Complete and open tasks'",
-      /const RESUME_PROMPT = "Complete and open tasks";/.test(APP));
+check("the resume prompt is 'Complete the open tasks'",
+      /const RESUME_PROMPT = "Complete the open tasks";/.test(APP));
 for (const id of ["stop-btn", "stop-icon", "stop-text", "shutdown-btn", "shutdown-text"])
   check(`index.html has id="${id}"`, HTML.includes(`id="${id}"`));
 check("the Start state has a CSS rule", /\.st-btn\[data-mode="start"\]/.test(
@@ -120,9 +120,9 @@ check("after the turn the button is data-mode=start", els["stop-btn"].dataset.mo
 els["input"].value = "something the user was typing";
 sent = null;
 api.clickStop();                     // Start: inject the prompt and send it
-check("Start injects the prompt into the composer", sent === "Complete and open tasks",
+check("Start injects the prompt into the composer", sent === "Complete the open tasks",
       `sent ${JSON.stringify(sent)}`);
-check("Start replaces whatever was in the box", els["input"].value === "Complete and open tasks",
+check("Start replaces whatever was in the box", els["input"].value === "Complete the open tasks",
       `got ${JSON.stringify(els["input"].value)}`);
 
 // ---- the banner's Shut Down button -----------------------------------------

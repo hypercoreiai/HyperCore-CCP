@@ -81,7 +81,7 @@ CDN — `serve/web/` is one page, its styles, an inline SVG sprite and the Outfi
   use them. Ctrl+C, SIGTERM and `restart.sh stop` close the whole process through the same
   plain-Python path, so it behaves the same on Windows and Linux.
 - **Stop / Start** — the composer's button while an answer is running. It stops that answer;
-  once the turn has ended the same button reads **Start** and sends "Complete and open
+  once the turn has ended the same button reads **Start** and sends "Complete the open
   tasks", so a chat that stopped mid-work picks up without the user typing anything.
 
 What the front end reads, and what changed with it:
