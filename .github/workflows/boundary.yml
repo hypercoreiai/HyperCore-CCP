@@ -1,12 +1,13 @@
 name: Boundary gates
 
-# Five blocking stages, in the order a failure should be found:
+# Six blocking stages, in the order a failure should be found:
 #   1. the wire layout is self-consistent,
 #   2. the supervisor behaves against the wire,
-#   3. one backend repeats itself, and every backend answers the same request the same way,
-#   4. the hardware guard runs when the weights are actually present,
-#   5. the same contract holds on a toolchain that is not this one.
-# Stage 5 is the one that cannot be reproduced locally, so it is required, not optional.
+#   3. the page keeps its contract with the server it ships with,
+#   4. one backend repeats itself, and every backend answers the same request the same way,
+#   5. the hardware guard runs when the weights are actually present,
+#   6. the same contract holds on a toolchain that is not this one.
+# Stage 6 is the one that cannot be reproduced locally, so it is required, not optional.
 # It needs DAYTONA_API_KEY on the repository; without the secret it reports SKIP rather
 # than failing a build for something that has nothing to do with the code.
 # The same five stages, in the same order, can be replayed on a build host with ./install.sh.
@@ -56,6 +57,28 @@ jobs:
       # credential rule serve/server.py does (serve/http_auth.py is the shared function).
       - name: Integration guard - stub HTTP, no GPU, no weights, key required
         run: python3 tools/bench_flood.py --worker build/hypercore-worker --concurrency 12 --slots 4 --api-key ci-boundary-key
+
+  web-contract:
+    needs: supervisor-tests
+    runs-on: ubuntu-latest
+    # serve/web/ is shipped as files, not built. These tests read index.html, app.js and the
+    # CSS and assert what the page does with the events this server sends - the agent dropdown,
+    # the tool heartbeat, the two-click Shut Down, the composer's Stop/Start pair, the surface
+    # slider. No GPU, no weights, no browser: a page that no longer matches its own server is
+    # caught here rather than on a user's machine.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: The tooling the gates import
+        run: python3 -m pip install -r requirements.txt
+      - name: The page against the routes it calls
+        run: python3 -m unittest serve.test_web_client serve.test_frontend serve.test_monitor_fields serve.test_doc_text
+      - name: The buttons and the slider, in node
+        run: |
+          node serve/web/test_stop_start_buttons.js
+          node serve/web/test_surface_slider.js
+          node serve/web/test_assist_thought_panel.js
 
   backend-parity:
     needs: supervisor-tests

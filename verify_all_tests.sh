@@ -16,6 +16,10 @@
 # (cudaMalloc, cudaSetDevice, the expert cache).  With the server resident the card has
 # ~30 MiB free and they all fail with "out of memory".  A clean run needs the card.
 #
+# The web-ui stage needs node.  Where node is not installed the stage reports SKIP and exits
+# 0, the same way the cross-toolchain stage reports SKIP without DAYTONA_API_KEY: a tool
+# that is not on this machine is not a failure of the code.
+#
 # Four environment quirks this script works around, so a failure means a real failure:
 #   ple_parity   CMake registers it with no --gguf; it needs HYPERCORE_PLE_GGUF, which is
 #                taken from the run config here.
@@ -49,9 +53,9 @@ LIMIT_PY="${LIMIT_PY:-900}"
 LIMIT_MCP="${LIMIT_MCP:-600}"
 LIMIT_PLE="${LIMIT_PLE:-300}"
 
-ALL_STAGES="preflight build ctest ctest-serial worker-load pytest-tools pytest-serve mcp-tools ple-io"
+ALL_STAGES="preflight build ctest ctest-serial worker-load pytest-tools pytest-serve mcp-tools web-ui ple-io"
 
-usage() { sed -n '2,23p' "$0"; exit 2; }
+usage() { sed -n '2,27p' "$0"; exit 2; }
 
 while [ $# -gt 0 ]; do
     a="$1"; shift
@@ -75,6 +79,7 @@ if [ -n "$ONLY" ]; then
             tools) want=pytest-tools ;;
             serve) want=pytest-serve ;;
             mcp)   want=mcp-tools ;;
+            web)   want=web-ui ;;
             ple)   want=ple-io ;;
         esac
         found=0
@@ -126,6 +131,8 @@ tally_of() {
                         grep -oE '^(OK|FAILED \(.*\))$' "$log" | tail -1; } ;;
         ple-io)        { grep -oE 'ple_direct_rows_per_s = [0-9]+ rows/s \([0-9.]+ us/token\)[^\n]*' "$log" | tail -1;
                         grep -oE 'real-table check: [A-Za-z-]+' "$log" | tail -1; } ;;
+        web-ui)        { grep -oE 'web-ui: [0-9]+ suites, [0-9]+ checks' "$log" | tail -1;
+                        grep -oE 'SKIP: node is not installed' "$log" | tail -1; } ;;
         ctest-serial)  { grep -oE 'reran [0-9]+ failed test\(s\): [0-9]+ real, [0-9]+ contention or no-GPU' "$log" | tail -1;
                         grep -oE 'NOT REGISTERED [A-Za-z0-9_]+|no worker binary' "$log" | head -3; } ;;
         worker-load)   grep -oE 'worker handshake: .*' "$log" | tail -1 ;;
@@ -354,6 +361,24 @@ if [ $? -ne 0 ]; then
 fi
 EOF
 
+cat > "$TMPRUN/web-ui.sh" <<'EOF'
+# The page ships as files, so its tests read them: no browser, no GPU, no weights.
+cd "$VERIFY_ROOT"
+if ! command -v node >/dev/null 2>&1; then
+    echo "SKIP: node is not installed on this machine"
+    exit 0
+fi
+suites=0; checks=0
+for t in test_stop_start_buttons test_surface_slider test_assist_thought_panel; do
+    echo "--- serve/web/$t.js"
+    out="$(node "serve/web/$t.js")" || { echo "$out"; exit 1; }
+    echo "$out"
+    n=$(printf '%s\n' "$out" | grep -c '^ok')
+    suites=$((suites + 1)); checks=$((checks + n))
+done
+echo "web-ui: $suites suites, $checks checks"
+EOF
+
 cat > "$TMPRUN/ple-io.sh" <<'EOF'
 # The direct-vs-mmap A/B, GPU-free: this is what --ple-io direct measures at startup.
 cd "$VERIFY_ROOT"
@@ -397,6 +422,7 @@ for stage in $STAGES; do
         pytest-tools)  run_stage pytest-tools "$LIMIT_PY" "$TMPRUN/pytest-tools.sh" ;;
         pytest-serve)  run_stage pytest-serve "$LIMIT_PY" "$TMPRUN/pytest-serve.sh" ;;
         mcp-tools)     run_stage mcp-tools "$LIMIT_MCP" "$TMPRUN/mcp-tools.sh" ;;
+        web-ui)        run_stage web-ui 120 "$TMPRUN/web-ui.sh" ;;
         ple-io)        run_stage ple-io "$LIMIT_PLE" "$TMPRUN/ple-io.sh" ;;
         preflight)     run_stage preflight 120 "$TMPRUN/preflight.sh" ;;
     esac
