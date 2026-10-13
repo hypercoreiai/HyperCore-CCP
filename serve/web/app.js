@@ -617,6 +617,10 @@ async function loadPrompts(quiet = false) {
     const r = await fetch("prompts", {headers: headers()});
     if (!r.ok) return;                                   // an older server has no /prompts: nothing to offer
     const cat = await r.json();
+    if (cat.error) {                                     // prompt.json is there but unreadable: say so
+      if (!quiet) toast("error", "Agent profiles", cat.error, 8000);
+      return;
+    }
     const stamp = (cat.agents || []).map((a) => `${a.key}:${a.name}`).join("|");
     if (stamp === promptStamp) return;                   // unchanged: do not touch the menu
     promptStamp = stamp;

@@ -28,11 +28,21 @@ class AgentDropdown(unittest.TestCase):
 
     def test_a_refresh_that_changes_nothing_leaves_the_menu_alone(self):
         """loadPrompts compares the catalog's stamp and returns before touching the select."""
-        body = re.search(r"async function loadPromts|async function loadPrompts\(quiet = false\) \{(.*?)\n\}", APP, re.S)
+        body = re.search(r"async function loadPrompts\(quiet = false\) \{(.*?)\n\}", APP, re.S)
         self.assertTrue(body, "loadPrompts is not in the page")
         code = body.group(1)
         self.assertIn("stamp === promptStamp", code)
         self.assertIn("renderAgents()", code)
+
+    def test_a_prompt_file_that_does_not_parse_is_reported(self):
+        """catalog() answers {"error": ...} when prompt.json is not valid JSON - which is what a
+        hand edit to the file does. An empty dropdown with no reason reads as a server bug, so the
+        page says what is wrong instead.
+        """
+        body = re.search(r"async function loadPrompts\(quiet = false\) \{(.*?)\n\}", APP, re.S)
+        code = body.group(1)
+        self.assertIn("if (cat.error)", code, "a broken prompt.json is silently an empty menu")
+        self.assertIn("toast(\"error\", \"Agent profiles\", cat.error", code)
 
     def test_an_agent_profile_is_sent_as_a_system_turn(self):
         # the profile is prepended to the payload before the context cap prunes it,
