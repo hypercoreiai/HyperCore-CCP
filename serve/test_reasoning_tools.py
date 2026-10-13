@@ -25,8 +25,8 @@ OTHER = CALL.replace("read_file", "not_declared")
 TOOLS = [{"name": "read_file", "parameters": {"properties": {"limit": {"type": "integer"}, "path": {"type": "string"}}}}]
 
 
-def run(text, width, tools=TOOLS, thinking=True, stream_tools=True):
-    p = OutputParser(thinking=thinking, tools=tools, stream_tools=stream_tools)
+def run(text, width, tools=TOOLS, thinking=True, stream_tools=True, recover=False):
+    p = OutputParser(thinking=thinking, tools=tools, stream_tools=stream_tools, recover=recover)
     evs = []
     for i in range(0, len(text), width):
         evs += p.feed(text[i:i + width])
@@ -109,6 +109,41 @@ class Parser(unittest.TestCase):
         evs = p.feed("hello <tool_c")
         self.assertEqual(joined(evs, "reasoning"), "hello ")
         self.assertEqual(joined(p.feed("ats are nice</think>"), "reasoning"), "<tool_cats are nice")
+
+
+class JsonCallRecovery(unittest.TestCase):
+    """#2037: a model that writes the call as JSON inside the explicit wrapper, in a Markdown fence.  Off by default;
+    `"tool_call_recovery": true` turns it on."""
+    PAYLOAD = '{"name": "read_file", "arguments": {"path": "file.txt", "limit": 120}}'
+
+    def test_a_fenced_json_call_is_a_call(self):
+        for fence in ("```json\n", "```\n", "```JSON\r\n"):
+            raw = "<tool_call>\n" + fence + self.PAYLOAD + "\n```\n</tool_call></think>\n\nanswer"
+            for width in (len(raw), 1, 7):
+                with self.subTest(fence=fence, width=width):
+                    evs = run(raw, width, recover=True)
+                    calls = [e.call for e in evs if e.kind == "tool_call"]
+                    self.assertEqual([(c.name, c.arguments) for c in calls],
+                                     [("read_file", {"path": "file.txt", "limit": 120})])
+                    self.assertEqual(joined(evs, "content"), "answer")
+
+    def test_a_bare_json_call_is_a_call(self):
+        raw = "<tool_call>\n" + self.PAYLOAD + "\n</tool_call></think>\n\nanswer"
+        evs = run(raw, len(raw), recover=True)
+        self.assertEqual([(e.call.name, e.call.arguments) for e in evs if e.kind == "tool_call"],
+                         [("read_file", {"path": "file.txt", "limit": 120})])
+
+    def test_off_by_default(self):
+        raw = "<tool_call>\n```json\n" + self.PAYLOAD + "\n```\n</tool_call>"
+        evs = run(raw, len(raw), recover=False)
+        self.assertFalse([e for e in evs if e.kind == "tool_call"])
+        self.assertEqual(joined(evs, "reasoning") + joined(evs, "content"), raw)
+
+    def test_undeclared_tool_stays_text(self):
+        raw = "<tool_call>\n```json\n{\"name\": \"other\", \"arguments\": {}}\n```\n</tool_call>"
+        evs = run(raw, len(raw), recover=True)
+        self.assertFalse([e for e in evs if e.kind == "tool_call"])
+        self.assertEqual(joined(evs, "reasoning") + joined(evs, "content"), raw)
 
 
 class OverHttp(unittest.TestCase):

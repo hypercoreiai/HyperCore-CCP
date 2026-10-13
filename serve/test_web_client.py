@@ -165,5 +165,55 @@ class SurfaceSlider(unittest.TestCase):
         self.assertNotIn("surface", APP[APP.find("function sharedDefaults"):APP.find("async function saveShared")])
 
 
+class StopStartPair(unittest.TestCase):
+    """The composer's Stop/Start pair, and the banner's two-click Shut Down.
+
+    The banner is deliberately not a Start button: it arms on the first click and shuts the
+    server down on the second. The /v1/stop - /v1/start pair stays on the server for the API
+    and the Monitor. The behaviour is exercised in serve/web/test_stop_start_buttons.js; these
+    are the contract tests on the shipped files."""
+
+    CSS = (ROOT / "serve" / "web" / "components.css").read_text(encoding="utf-8")
+    SERVER = (ROOT / "serve" / "server.py").read_text(encoding="utf-8")
+
+    def test_the_composer_button_has_a_start_state(self):
+        for el in ("stop-btn", "stop-icon", "stop-text"):
+            self.assertIn(f'id="{el}"', PAGE)
+        for line in ('const RESUME_PROMPT = "Complete and open tasks";',
+                     "function paintStopButton(mode) {",
+                     'btn.dataset.mode = mode;',
+                     'web/sprite.svg#i-bolt',
+                     'function endTurn() {',
+                     'turnEnded = true;'):
+            self.assertIn(line, APP, f"the composer's Start button no longer has {line}")
+        self.assertIn('$("input").value = RESUME_PROMPT;', APP)
+        self.assertIn("endTurn();", APP[APP.find("busy = null;"):APP.find("saveChat();")])
+
+    def test_the_banner_button_is_a_plain_shut_down(self):
+        for el in ("shutdown-btn", "shutdown-text"):
+            self.assertIn(f'id="{el}"', PAGE)
+        for line in ("let shuttingDown = false, armed = false;",
+                     'btn.dataset.armed = "1";',
+                     'setTimeout(() => { if (!shuttingDown) disarmShutdown(); }, 8000);',
+                     'fetch("v1/shutdown"'):
+            self.assertIn(line, APP, f"the banner's two-click Shut Down no longer has {line}")
+        self.assertNotIn('fetch("v1/stop"', APP, "the banner must not stop the engine instead of the server")
+        self.assertNotIn('fetch("v1/start"', APP, "the banner must not be a Start button")
+
+    def test_the_start_state_is_styled(self):
+        self.assertIn('.st-btn[data-mode="start"]{', self.CSS)
+
+    def test_the_server_answers_both_halves(self):
+        self.assertIn('if path in ("/v1/stop", "/v1/start"):', self.SERVER)
+        self.assertIn("svc.engine_stopped = True", self.SERVER)
+        self.assertIn("def start_engine(self) -> bool:", self.SERVER)
+        self.assertIn("raise EngineStopped(", self.SERVER)
+        self.assertIn('"engine_stopped"', self.SERVER)
+        # stopping the engine must not end the process: only /v1/shutdown sets that flag
+        stop_block = self.SERVER[self.SERVER.find('if path in ("/v1/stop", "/v1/start")'):
+                         self.SERVER.find('if path in ("/v1/stop", "/v1/start")') + 2400]
+        self.assertNotIn("stop_requested.set()", stop_block)
+
+
 if __name__ == "__main__":
     unittest.main()

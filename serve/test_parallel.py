@@ -27,6 +27,8 @@ args = sys.argv[1:]
 slots = int(args[args.index("--batch") + 1]) if "--batch" in args else 0
 fit = int(args[args.index("--fit") + 1]) if "--fit" in args else slots
 fail = "--fail-window" in args        # #997: the first window over two slots fails
+refuse = int(args[args.index("--refuse-slot") + 1]) if "--refuse-slot" in args else None   # #1994: the first BGEN on that slot is refused
+refused_once = False
 STEP = 0.02
 CH = 32
 lines, stop = queue.Queue(), threading.Event()
@@ -86,6 +88,10 @@ while True:
     if line.startswith(("GEN ", "BGEN ")):
         f = line.split()
         slot = int(f[1]) if f[0] == "BGEN" else None
+        if f[0] == "BGEN" and slot == refuse and not refused_once:
+            refused_once = True
+            print(f"ERR BGEN: no such free slot (--batch {slots}) or a bad max_new", flush=True)
+            continue
         max_new = int(f[2] if f[0] == "BGEN" else f[1])
         ids = f[-1].split(",")
         if log:
@@ -222,7 +228,7 @@ class PickSlot(unittest.TestCase):
 class ParallelService(unittest.TestCase):
     """The real HyperCoreEngine and Service over HTTP, the fake engine behind them."""
 
-    def start(self, slots, fit=None, slot_cache=False, fail=False):
+    def start(self, slots, fit=None, slot_cache=False, fail=False, refuse_slot=None):
         import serve.server as server
         self.tmp = tempfile.TemporaryDirectory()
         script = Path(self.tmp.name) / "fake_hypercore.py"
@@ -232,6 +238,8 @@ class ParallelService(unittest.TestCase):
         extra = ["--batch", str(slots)] + (["--fit", str(fit)] if fit is not None else []) + ["--log", str(self.log)]
         extra += ["--slotcache"] if slot_cache else []
         extra += ["--fail-window"] if fail else []
+        if refuse_slot is not None:
+            extra += ["--refuse-slot", str(refuse_slot)]
         with mock.patch.object(server.subprocess, "Popen",
                                lambda cmd, **kw: real([sys.executable, str(script), *cmd[1:]], **kw)):
             self.engine = HyperCoreEngine("hypercore", extra)
@@ -442,6 +450,19 @@ class ParallelService(unittest.TestCase):
         note = self.engine.death_note()
         self.assertIn("exited (code 1)", note)
         self.assertIn("verify batch: layer 34 never rang (graph finished)", note)
+
+    def test_a_refused_slot_is_tried_at_another_one(self):
+        # #1994: the engine said "no such free slot" for the slot we picked.  That is not the conversation's fault:
+        # the slot is parked here for a moment and the request takes another one instead of ending in a 400.
+        self.start(2, refuse_slot=0)
+        res = self.race("long " * 600, "short")
+        self.assertEqual(res["short"][0], "ok, done.")
+        admitted = [int(x.split()[1]) for x in self.log.read_text().splitlines() if x.startswith("BGEN")]
+        self.assertEqual(admitted[:1], [1], admitted)          # the refused slot 0 was never used
+        self.assertNotIn(0, admitted, admitted)
+        self.assertTrue(self.engine.slot_busy[0], "the refused slot stays claimed while the engine frees it")
+        time.sleep(self.engine.SLOT_PARK_S + 0.4)
+        self.assertFalse(self.engine.slot_busy[0], "and is given back when nobody took it")
 
 
 if __name__ == "__main__":

@@ -101,6 +101,10 @@ a{color:var(--st-accent-text);text-decoration:none} a:hover{text-decoration:unde
 .st-btn--primary:hover{background:var(--st-accent-hover)}
 .st-btn--secondary{background:transparent;color:var(--st-ink);border:1.5px solid var(--st-line)}
 .st-btn--secondary:hover{background:var(--st-surface-2)}
+/* the same button in its Start state: the composer's Stop becomes Start when a turn ends,
+   so a chat that stopped mid-work can be continued from the same button */
+.st-btn[data-mode="start"]{background:var(--st-accent-tint);color:var(--st-accent-text);border-color:transparent}
+.st-btn[data-mode="start"]:hover{background:var(--st-accent);color:var(--st-accent-ink)}
 .st-btn--danger{background:var(--st-danger-tint);color:var(--st-danger-text)}
 .st-btn--icon{width:36px;height:36px;padding:0;border-radius:10px;background:transparent;color:var(--st-ink-muted)}
 .st-btn--icon:hover{background:var(--st-surface-2);color:var(--st-ink)}

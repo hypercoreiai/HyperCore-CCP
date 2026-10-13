@@ -205,6 +205,9 @@ applySurface(savedSurface);
 // POST /v1/shutdown only asks; main() then runs the same closers Ctrl+C and SIGTERM
 // run, so the engine is told to free its memory before anything is killed. That path is
 // plain Python - no signals, no process scanning - so it behaves the same on Windows.
+// POST /v1/stop and POST /v1/start (the engine only, the server stays up) still exist for
+// the API and the Monitor; this button does not use them.
+const RESUME_PROMPT = "Complete and open tasks";   // what the composer's Start button asks for
 let shuttingDown = false, armed = false;
 const SHUTDOWN_TITLE = "Shut down HyperCore: stop the model, the MCP servers and the image encoder, then close this server";
 function disarmShutdown() {
@@ -245,7 +248,6 @@ $("shutdown-btn").onclick = async () => {
     toast("error", "Could not shut down", String(e.message || e));
   }
 };
-
 let tab = "chat";
 function showTab(name) {
   tab = ["chat", "monitor", "about", "assist"].includes(name) ? name : "chat";
@@ -1247,11 +1249,41 @@ function assistantMessages(m) {
   return out;
 }
 
+// The composer's Stop button is a two-state control: Stop while a turn runs, Start once it
+// has ended. Start sends RESUME_PROMPT, so a chat that stopped mid-work picks up where it
+// left off without the user typing anything. turnEnded keeps the button out of the way
+// before the first turn of a chat has finished.
+let turnEnded = false;
+
+function paintStopButton(mode) {
+  const btn = $("stop-btn"), icon = $("stop-icon"), text = $("stop-text");
+  btn.dataset.mode = mode;
+  if (mode === "stop") {
+    btn.hidden = false;
+    icon.setAttribute("href", "web/sprite.svg#i-stop");
+    text.textContent = "Stop";
+    btn.title = "Stop this answer";
+    btn.setAttribute("aria-label", "Stop this answer");
+    return;
+  }
+  btn.hidden = !turnEnded;
+  icon.setAttribute("href", "web/sprite.svg#i-bolt");
+  text.textContent = "Start";
+  btn.title = `Start a turn: ask the model to "${RESUME_PROMPT}"`;
+  btn.setAttribute("aria-label", "Start: complete and open tasks");
+}
+
 function setBusy(on) {
-  $("stop-btn").hidden = !on;
+  paintStopButton(on ? "stop" : "start");
   $("send-btn").disabled = on;
   beat = null;
   $("composer-hint").textContent = beatText();
+}
+
+// A turn is over: the composer's button becomes Start, and Start has something to do.
+function endTurn() {
+  turnEnded = true;
+  setBusy(false);
 }
 
 // ------------------------------------------------------------------ heartbeat
@@ -1389,7 +1421,7 @@ async function send() {
   if (ran) m.meta = `${m.meta ? `${m.meta} · ` : ""}${ran} tool call${ran > 1 ? "s" : ""}`;
   if (m.limit) m.meta = `${m.meta || ""} · stopped at the limit of ${m.limit} tool rounds (mcp.max_rounds)`;
   busy = null;
-  setBusy(false);
+  endTurn();
   if (frame) cancelAnimationFrame(frame);
   updateAssistant(el, m, false);
   saveChat();
@@ -1397,7 +1429,12 @@ async function send() {
 }
 
 $("composer").onsubmit = (e) => { e.preventDefault(); send(); };
-$("stop-btn").onclick = () => { if (busy) busy.controller.abort(); };
+$("stop-btn").onclick = () => {
+  if ($("stop-btn").dataset.mode === "stop") { if (busy) busy.controller.abort(); return; }
+  if (busy) return;
+  $("input").value = RESUME_PROMPT;   // the Start button injects the prompt and sends it
+  send();
+};
 $("input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
 });
@@ -1406,6 +1443,8 @@ $("input").addEventListener("input", autosize);
 
 $("new-btn").onclick = () => {
   if (busy) { toast("warn", "Still writing", "Stop the answer first."); return; }
+  turnEnded = false;
+  paintStopButton("start");           // a new chat has no turn to resume
   loadPrompts(true);                                    // a new chat is a good moment to pick up a new profile
   if (!messages.length && !compactState) return;
   const backup = messages, compactBackup = compactState;

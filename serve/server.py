@@ -343,9 +343,41 @@ class EngineStuck(RuntimeError):
     reporting its GPU and RAM as given back."""
 
 
+class EngineStopped(RuntimeError):
+    """The engine was stopped with POST /v1/stop and has not been started again. A request that arrives while it is
+    stopped is refused (409) instead of quietly loading the model behind the button and answering with nothing: an
+    empty reply reaches the Monitor as a turn that ran out of tokens."""
+
+
 class GpuBusy(RuntimeError):
     """The model is unloaded and the GPU has less free VRAM than min_free_vram_mib: something else (a game, another
-    model server) is using it, so the engine is not started into the little that is left."""
+    model server) is using it, so the engine is not started into the little that is left.  `retry_after`: seconds for
+    the Retry-After header of the 503."""
+
+    def __init__(self, message="", retry_after=None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class SlotRefused(RuntimeError):
+    """#1994: the engine would not take a batch slot after several tries (its view of the slots and the server's
+    differ, or it is full).  Not the request's fault: a retryable 503, never a 400 about the conversation."""
+
+    def __init__(self, message="", retry_after=None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def unload_wait(value, default: float) -> float | None:
+    """#1997: `?wait=` on POST /unload: no value means do not wait, a bare `wait` waits the default, `wait=60` that
+    many seconds.  A client that wants the GPU back now (another model server unloading) gets a real wait instead of a
+    409 busy on the first try."""
+    if value is None:
+        return None
+    try:
+        return float(value) if value.strip() else default
+    except ValueError:
+        return default
 
 
 ENGINE_REQUEST = re.compile(
@@ -1589,6 +1621,7 @@ class Service:
         self.last_request_at = None                      # when a request last started or finished
         self.started_at = time.time()
         self.status_lock = threading.Lock()
+        self.engine_stopped = False                   # POST /v1/stop set it: the engine is down until /v1/start
         self.mcp = None                                  # serve/mcp/'s McpHub when MCP servers are configured
         # GET /prompts: the agent profiles the web app's dropdown is built from. prompt.json beside the
         # server, or the one in the prompts/ folder beside it, is re-read when it changes, so a new profile
@@ -1599,9 +1632,14 @@ class Service:
         # server's model); the next request after an unload starts the engine again
         self.idle_unload_s = 0
         self.min_free_vram_mib = 0
+        self.vram_free_wait_s = 15.0                     # how long a full card is waited on (memory given back)
         self.before_load = None
+        self.before_load_timeout_s = 120.0               # #1997: how long the before_load command may run
+        self.before_load_ignore_failure = False          # #1997: load even when it fails, without a VRAM check
+        self.before_load_strict = False                  # #1997: refuse the request when it fails
         self.vram_reserve = None                         # #533: the last POST /v1/vram reserve (None: the start's)
         self.reasoning_loop_recovery = False
+        self.tool_call_recovery = False                  # #2037: opt-in, read a tool call written as JSON
         self.reasoning_budget_tokens = 0                 # #123: the config's default thinking budget (0: none)
         self.repeat_stop_tokens = REPEAT_STOP_TOKENS     # #606: one token this many times in a row ends a reply (0: off)
         # the turn-tail check (#...): off until the config or --turn-tail-check turns it on
@@ -1741,27 +1779,93 @@ class Service:
         except Exception:
             return None
 
+    def start_engine(self) -> bool:
+        """POST /v1/start: bring the engine back after /v1/stop.
+
+        A Start the user asked for is not a crash, so it is not charged against the supervisor's restart budget:
+        stopping and starting a working engine several times must not exhaust it and leave every later request
+        running against a worker that is no longer there.
+
+        Whether it worked is read from the engine, not from the call's return value: the process engines' restart()
+        returns None on success and raises when the process exits before READY. Returns False when the engine did
+        not come back, and self.engine_stopped stays True in that case so the page can try again.
+        """
+        supervisor = getattr(self.engine, "supervisor", None)
+        allow = getattr(supervisor, "allow_deliberate_restart", None)
+        if allow is not None:
+            allow()
+        try:
+            if hasattr(self.engine, "restart"):
+                self.engine.restart()
+            elif hasattr(self.engine, "start_worker"):
+                self.engine.start_worker()
+            else:                                   # an engine with no restart path: load it the plain way
+                self.engine_stopped = False
+                self.ensure_loaded()
+        except (EngineDied, EngineStuck, RuntimeError, OSError) as error:
+            print(f"[hypercore] the engine did not come back: {error}", flush=True)
+            self.engine_stopped = True
+            return False
+        self.engine_stopped = not self.loaded()
+        return not self.engine_stopped
+
     def ensure_loaded(self):
         """Start the engine if it is not running (unloaded, or it died - issue #27), after the before_load hook and
-        the free-VRAM check.  The caller holds self.fifo."""
+        the free-VRAM check.  The caller holds self.fifo.  A deliberate Stop is not an unload: while the engine is
+        stopped this refuses rather than loading it behind the button."""
+        if self.engine_stopped:
+            raise EngineStopped("the engine is stopped: start it again (POST /v1/start) before sending a request")
         if self.loaded() and not self._vision_down():
             return
+        hook_failed = None
         if self.before_load:
             cmd = self.before_load
             print(f"[hypercore] before loading: {cmd if isinstance(cmd, str) else ' '.join(map(str, cmd))}", flush=True)
+            why = None
             try:
-                subprocess.run(cmd, shell=isinstance(cmd, str), timeout=120, stdin=subprocess.DEVNULL)
+                r = subprocess.run(cmd, shell=isinstance(cmd, str), timeout=self.before_load_timeout_s,
+                                   stdin=subprocess.DEVNULL)
+                if r.returncode != 0:
+                    why = f"it exited with code {r.returncode}"
+            except subprocess.TimeoutExpired:
+                why = f"it did not finish in {self.before_load_timeout_s:g} s (before_load_timeout_s)"
             except (OSError, subprocess.SubprocessError) as e:
-                print(f"[hypercore] the before_load command failed ({e}); loading anyway", flush=True)
-        if self.min_free_vram_mib:
+                why = f"it could not run ({e})"
+            if why is not None:
+                # #1997: a failing hook (e.g. the other server's /unload that is still busy) may mean the GPU was not
+                # given back.  A peer that is simply not running also makes `curl` fail (exit 7), so the exit code
+                # alone does not refuse: the card's free VRAM decides (min_free_vram_mib, checked just below);
+                # "strict" always refuses, "ignore" always loads.
+                if self.before_load_strict and not self.before_load_ignore_failure:
+                    print(f"[hypercore] the before_load command failed ({why}); the model stays unloaded and this "
+                          "request is answered 503 - try again (before_load_strict)", flush=True)
+                    raise GpuBusy(f"the before_load command failed ({why}): the GPU was not given back, so the "
+                                  "model was not loaded; try again in a moment", retry_after=15)
+                hook_failed = why
+                if self.before_load_ignore_failure or not self.min_free_vram_mib:
+                    print(f"[hypercore] the before_load command failed ({why}); loading anyway"
+                          + ("" if self.before_load_ignore_failure else
+                             " (set min_free_vram_mib to have the free VRAM checked, or before_load_strict to refuse)"),
+                          flush=True)
+                else:
+                    print(f"[hypercore] the before_load command failed ({why}); checking the free VRAM", flush=True)
+        if self.min_free_vram_mib and not (hook_failed and self.before_load_ignore_failure):
             free = self.free_vram_mib()
-            deadline = time.time() + 15                 # memory another process just gave back can take a moment
+            deadline = time.time() + self.vram_free_wait_s   # memory another process just gave back can take a moment
             while free is not None and free < self.min_free_vram_mib and time.time() < deadline:
                 time.sleep(0.5)
                 free = self.free_vram_mib()
             if free is not None and free < self.min_free_vram_mib:
+                if hook_failed and not self.before_load_ignore_failure:
+                    print(f"[hypercore] the before_load command failed ({hook_failed}) and only {free} MiB of VRAM "
+                          f"is free (the model needs {self.min_free_vram_mib}): not loading; 503", flush=True)
                 raise GpuBusy(f"the GPU is in use by another program: {free} MiB of VRAM free, the model needs "
-                              f"{self.min_free_vram_mib} (min_free_vram_mib) - it stays unloaded until that is free")
+                              f"{self.min_free_vram_mib} (min_free_vram_mib) - it stays unloaded until that is free"
+                              + (f"; the before_load command failed ({hook_failed})" if hook_failed else ""),
+                              retry_after=15)
+            if hook_failed and not self.before_load_ignore_failure:
+                print(f"[hypercore] the before_load command failed ({hook_failed}), but {free} MiB of VRAM is free: "
+                      "loading", flush=True)
         if self._vision_down():                         # first, as at a start: a GPU encoder takes its VRAM before
             print("[hypercore] starting the vision encoder again ...", flush=True)   # the engine sizes its cache
             self.vision.restart()
@@ -1841,6 +1945,18 @@ class Service:
                     with self.status_lock:
                         trace["load_s"] += round(time.perf_counter() - loading, 3)
                         trace["state"] = "queued"
+
+    UNLOAD_WAIT_S = 300.0       # #1997: POST /unload?wait=1 waits this long for the running turn (wait=<s> to choose)
+
+    def unload_waiting(self, wait_s: float) -> str:
+        """#1997: unload(), but a running request is given up to wait_s seconds to finish first.  Returns "unloaded"
+        when it did, "busy" when the wait ran out."""
+        deadline = time.monotonic() + max(0.0, wait_s)
+        while True:
+            r = self.unload()
+            if r != "busy" or time.monotonic() >= deadline:
+                return r
+            time.sleep(0.25)
 
     def unload(self, idle_for: float | None = None) -> str:
         """Stop the engine between requests: "unloaded", "not loaded", "busy" (a request is running or waiting, or
@@ -2081,6 +2197,8 @@ class Service:
         return {
             "service": "hypercore", "model": self.model,
             "loaded": self.loaded(), "auto_load": hasattr(self.engine, "restart"),
+            # stopped by POST /v1/stop: requests are refused (409) until POST /v1/start, not quietly reloaded
+            "engine_stopped": bool(self.engine_stopped),
             "structured_output": {"formats": ["json_object", "json_schema"], "method": "prompt_and_validate",
                                   "constrained_decoding": False, "stream_buffered": True},
             "engine": (getattr(self.engine, "info", {}) or {}).get("version"),
@@ -2379,7 +2497,8 @@ class Service:
         if defaults:                   # the request's own fields win (explicit 0 stays greedy)
             req_values = {k: v for k, v in (sampling or {}).items() if v is not None}
             sampling = {**defaults, **req_values}
-        parser = OutputParser(thinking=thinking, tools=tools, stream_tools=True)
+        parser = OutputParser(thinking=thinking, tools=tools, stream_tools=True,
+                              recover=self.tool_call_recovery)
         detok, n, finish = Detokenizer(self.tok), 0, "length"
         run_tok, run_len, repeated = None, 0, False     # #606: the current run of one repeated token
         thinking_n = 0                                  # tokens written while thinking (Responses' reasoning_tokens)
@@ -3502,7 +3621,7 @@ def make_handler(svc: Service):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
-        def _json(self, code, obj):
+        def _json(self, code, obj, headers=None):
             if self.record is not None:
                 with svc.status_lock:
                     self.record["http_status"] = code
@@ -3514,6 +3633,8 @@ def make_handler(svc: Service):
             body = json.dumps(obj, ensure_ascii=False).encode()
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
+            for k, v in (headers or {}).items():
+                self.send_header(k, str(v))
             self._cors()
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -3750,8 +3871,9 @@ def make_handler(svc: Service):
             if path.startswith("/slots/") and not self._own_page("conversations can be saved or restored"):
                 return
             if path == "/unload":                            # give the GPU back now (between requests)
+                wait_s = unload_wait(parse_qs(urlsplit(self.path).query).get("wait", [None])[0], svc.UNLOAD_WAIT_S)
                 try:
-                    r = svc.unload()
+                    r = svc.unload_waiting(wait_s) if wait_s else svc.unload()
                 except EngineStuck as e:
                     self._json(503, {"error": {"type": "server_error", "message": str(e)}})
                     return
@@ -3762,7 +3884,8 @@ def make_handler(svc: Service):
                     svc.load()
                     self._json(200, {"status": "loaded"})
                 except GpuBusy as e:
-                    self._json(503, {"error": {"type": "server_error", "message": str(e)}})
+                    self._json(503, {"error": {"type": "server_error", "message": str(e)}},
+                              headers={"Retry-After": int(e.retry_after)} if e.retry_after else None)
                 return
             try:
                 req = json.loads(self._body() or b"{}")
@@ -3818,7 +3941,9 @@ def make_handler(svc: Service):
                         self._json(404, {"error": {"message": "model not found"}})
                         return
                     if path == "/v1/unload":
-                        result = svc.unload()
+                        wait_s = unload_wait(parse_qs(urlsplit(self.path).query).get("wait", [None])[0],
+                                            svc.UNLOAD_WAIT_S)
+                        result = svc.unload_waiting(wait_s) if wait_s else svc.unload()
                         if result == "busy":
                             raise ModelBusy("a request is running or queued")
                     else:
@@ -3846,6 +3971,46 @@ def make_handler(svc: Service):
                                      "closing": running or ["the HTTP server"],
                                      "note": "the engine is asked to free its memory first, which can "
                                              "take a few seconds; nothing is killed until it answers"})
+                    return
+                if path in ("/v1/stop", "/v1/start"):   # the engine-only pair: the HTTP server stays up
+                    if not self._own_page("the engine can be stopped or started"):
+                        return
+                    if path == "/v1/stop":
+                        closed = []
+                        if getattr(svc, "engine", None) is not None and getattr(svc.engine, "alive", lambda: False)():
+                            svc.engine.unload()
+                            closed.append("the model engine")
+                        if getattr(svc, "vision", None) is not None:
+                            # the image encoder is freed the same way close_everything frees it
+                            off = getattr(svc.vision, "unload", None) or getattr(svc.vision, "shutdown", None)
+                            if off is not None:
+                                off()
+                            closed.append("the image encoder")
+                        if getattr(svc, "mcp", None) is not None:
+                            svc.mcp.close()
+                            closed.append("the MCP servers")
+                        svc.engine_stopped = True
+                        self._json(200, {"status": "stopped", "model": svc.model,
+                                         "stopped": closed or ["nothing was running"],
+                                         "note": "the HTTP server stays up: POST /v1/start brings the engine back"})
+                        return
+                    try:
+                        ok = svc.start_engine()
+                    except Exception as e:
+                        self._json(503, {"error": {"type": "server_error", "message": str(e)}})
+                        return
+                    if not ok:
+                        self._json(503, {"error": {"type": "server_error",
+                                                  "message": "the engine did not come back: see the engine log"}})
+                        return
+                    if getattr(svc, "mcp", None) is not None:
+                        try:
+                            svc.mcp.start()             # a hub that will not come back is not a failed start
+                        except Exception:
+                            pass
+                    svc.engine_stopped = False
+                    self._json(200, {"status": "running", "model": svc.model,
+                                     "note": "the engine is loading: the first answer takes a minute or two"})
                     return
                 if path == "/v1/vram":                       # #533: give VRAM back to other programs, or take it
                     if not self._own_page("the VRAM reserve can be changed"):
@@ -3892,11 +4057,14 @@ def make_handler(svc: Service):
                 self._json(503, {"error": {"type": "busy", "message": str(e)}})
             except ModelBusy as e:
                 self._json(409, {"error": {"type": "model_busy", "message": str(e)}})
+            except EngineStopped as e:
+                self._json(409, {"error": {"type": "engine_stopped", "message": str(e)}})
             except StructuredOutputError as e:
                 self._json(502, {"error": {"type": "structured_output_failed", "code": "structured_output_failed",
                                           "message": str(e)}})
-            except (GpuBusy, EngineStarting) as e:
-                self._json(503, {"error": {"type": "server_error", "message": str(e)}})
+            except (GpuBusy, EngineStarting, SlotRefused) as e:
+                self._json(503, {"error": {"type": "server_error", "message": str(e)}},
+                          headers={"Retry-After": int(e.retry_after)} if getattr(e, "retry_after", None) else None)
             except EngineDied as e:                          # before the answer started (not streamed)
                 self._json(503, {"error": {"type": "server_error", "message": f"{e}; the next request restarts it"}})
             except EngineStuck as e:                         # an unload or restart that could not end the engine
@@ -4225,8 +4393,10 @@ def make_handler(svc: Service):
                 return self._json(503, responses_error_body(str(e), "server_error", code="server_error"))
             except ModelBusy as e:
                 return self._json(409, responses_error_body(str(e), "server_error", code="model_busy"))
-            except (GpuBusy, EngineStarting, EngineStuck, EngineDied) as e:
-                return self._json(503, responses_error_body(str(e), "server_error", code="server_error"))
+            except (GpuBusy, EngineStarting, EngineStuck, EngineDied, SlotRefused) as e:
+                return self._json(503, responses_error_body(str(e), "server_error", code="server_error"),
+                                  headers={"Retry-After": int(e.retry_after)}
+                                  if getattr(e, "retry_after", None) else None)
             cancel = threading.Event()
             self._watch_client(cancel)                       # #430 #431
             run = svc.run(ids, thinking, tools, max_new, req, cancel)
@@ -5018,6 +5188,9 @@ def main() -> int:
     svc.min_free_vram_mib = a.min_free_vram_mib if a.min_free_vram_mib is not None else \
         int(cfg.get("min_free_vram_mib") or 0)
     svc.before_load = a.before_load or cfg.get("before_load") or None
+    svc.before_load_timeout_s = float(cfg.get("before_load_timeout_s") or 120.0)   # #1997
+    svc.before_load_ignore_failure = bool(cfg.get("before_load_ignore_failure"))
+    svc.before_load_strict = bool(cfg.get("before_load_strict"))
     # --slot-save-path is relative to the working directory the server was started in; the config's slot_save_path
     # to the config's "cwd" (the engine's folder) when it has one.  Either way the engine gets an absolute path.
     if a.slot_save_path or cfg.get("slot_save_path"):
@@ -5059,6 +5232,7 @@ def main() -> int:
         if budget:
             print(f"[hypercore] thinking budget: {budget} tokens (reasoning_budget_tokens; a request can set its own)",
                   flush=True)
+    svc.tool_call_recovery = bool(cfg.get("tool_call_recovery", False))   # #2037: a tool call written as JSON
     recovery = cfg.get("reasoning_loop_recovery", False)   # #728: false (default) | "stop" | "recover" (true)
     if recovery is True:
         recovery = "recover"

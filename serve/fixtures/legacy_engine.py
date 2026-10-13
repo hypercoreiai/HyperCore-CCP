@@ -36,6 +36,7 @@ from serve.server import (
     EngineSilent,
     EngineStuck,
     SessionRefused,
+    SlotRefused,
     _echoing,
     btrace,
     echo_requests,
@@ -529,6 +530,24 @@ class HyperCoreEngine:
 
     YIELDS_MAX = 2   # #656: how often one request's prompt read gives way to a shorter waiting one
 
+    BGEN_REFUSALS_MAX = 6    # #1994: how often one request tries another slot after the engine refused a BGEN
+    SLOT_PARK_S = 2.0        # ... and how long a refused slot stays claimed here while the engine frees it
+
+    def _park_slot(self, slot: int) -> None:
+        """#1994: the engine said this slot is not free (its view of the slots and ours differ for a moment).  Keep
+        it claimed here for a moment, then give it back if nobody took it in the meantime."""
+        self.slot_busy[slot] = True
+        self.slot_live[slot] = None
+
+        def wait():
+            time.sleep(self.SLOT_PARK_S)
+            with self.slot_cv:
+                if not self.slot_live[slot]:
+                    self.slot_busy[slot] = False
+                    self.slot_cv.notify_all()
+        t = threading.Thread(target=wait, daemon=True)
+        t.start()
+
     def _take_control(self, cancel, plen: int, after_epoch: int | None = None):
         """Waits for the control lines (one prompt read at a time), yielding None heartbeats; False when cancelled.
         `after_epoch`: a request whose read gave way lets the requests waiting then go first."""
@@ -612,7 +631,7 @@ class HyperCoreEngine:
         slot, gen0, reserved = None, None, None
         phase = "none"            # solo -> (admit -> slot) ; "done" once the engine has finished with this request
         stop_sent = False
-        yields, solo_again = 0, 0
+        yields, solo_again, refused = 0, 0, 0
         try:
             while True:   # a request in a slot that is left alone goes back to the solo path
                 if not holding:
@@ -699,17 +718,33 @@ class HyperCoreEngine:
                     phase = "admit"
                     self._ctl_mode, self._ctl_result, self._yielded = "batch", None, None
                     asked = False
-                    for x in self._control(cancel, pending.append):
-                        while pending:
-                            t = pending.pop(0)
-                            out.append(t)
-                            yield t
-                        if x is None:
-                            if (not asked and not embeddings and yields < self.YIELDS_MAX and
-                                    self._shorter_waiting(len(prompt))):
-                                self._send(f"BYIELD {slot}")
-                                asked = True
-                            yield None
+                    try:
+                        for x in self._control(cancel, pending.append):
+                            while pending:
+                                t = pending.pop(0)
+                                out.append(t)
+                                yield t
+                            if x is None:
+                                if (not asked and not embeddings and yields < self.YIELDS_MAX and
+                                        self._shorter_waiting(len(prompt))):
+                                    self._send(f"BYIELD {slot}")
+                                    asked = True
+                                yield None
+                    except ValueError as e:
+                        # #1994: the engine says this slot is not free (its view and ours differ for a moment, or a
+                        # slot it still holds).  That is not the request's fault and nothing was read: park the slot
+                        # for a moment (busy here too), and wait for another one - never a 400 for the conversation.
+                        if not (str(e).startswith("BGEN:") and left >= 1 and not cancel.is_set()):
+                            raise
+                        refused += 1
+                        if refused > self.BGEN_REFUSALS_MAX:
+                            raise SlotRefused(f"the engine would not take a batch slot after {refused} tries "
+                                            "(it is full or starting); try again") from None
+                        print(f"[hypercore] the engine refused slot {slot}: {e}; trying another one "
+                              f"({refused}/{self.BGEN_REFUSALS_MAX}) (issue #1994)", flush=True)
+                        self._park_slot(slot)
+                        slot = None
+                        continue
                     cont = bool(self._ctl_result and self._ctl_result[1])
                     phase = "slot" if cont else "none"
                     while pending:

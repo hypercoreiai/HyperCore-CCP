@@ -71,12 +71,18 @@ CDN — `serve/web/` is one page, its styles, an inline SVG sprite and the Outfi
   but it does need a key: put `ENDPOINT` and `API_KEY` in a `.env` beside the project.
   The model list is the set of models on that endpoint that answered a lag probe inside
   one second; "Show every model" lists the rest, and "Check lag" re-times them.
-- **Shut Down** — the red button at the right end of the banner. It asks the server to
-  stop, and the server then closes every process it started: the HTTP listener, the model
-  engine (asked to free its memory before it is terminated), the image encoder and the
-  MCP servers. It is two clicks so a stray click cannot end a model mid-request, and it
-  runs the same code path as Ctrl+C and SIGTERM, in plain Python, so it behaves the same
-  on Windows and Linux.
+- **Shut Down** — the red button at the right end of the banner. Two clicks on purpose:
+  the first arms it (the label reads **Confirm**, and it arms back off on its own after
+  eight seconds if nothing follows), the second calls `POST /v1/shutdown`, which runs the
+  same closers Ctrl+C and SIGTERM run — the model engine frees its memory, the image
+  encoder and the MCP servers close, then the HTTP server itself. A shutdown that fails
+  re-arms the button and says why. `POST /v1/stop` and `POST /v1/start` — the engine only,
+  the server stays up — are still there for the API and the Monitor; this button does not
+  use them. Ctrl+C, SIGTERM and `restart.sh stop` close the whole process through the same
+  plain-Python path, so it behaves the same on Windows and Linux.
+- **Stop / Start** — the composer's button while an answer is running. It stops that answer;
+  once the turn has ended the same button reads **Start** and sends "Complete and open
+  tasks", so a chat that stopped mid-work picks up without the user typing anything.
 
 What the front end reads, and what changed with it:
 

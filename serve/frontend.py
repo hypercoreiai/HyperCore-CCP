@@ -459,6 +459,7 @@ class Event:
 THINK_END = "</think>"
 CALL_START = "<tool_call>"
 CALL_END = "</tool_call>"
+_JSON_FENCE = re.compile(r"```[ \t]*(?:json)?[ \t]*\r?\n\s*", re.I)   # #2037
 
 
 PARAM_END = "</parameter>"
@@ -561,6 +562,32 @@ def forced_call(tool_choice, tools: list[dict] | None) -> str | None:
     return None
 
 
+def json_tool_call(body: str, schemas: dict) -> ToolCall | None:
+    """#2037: a declared tool's call written as JSON instead of the template's XML: `{"name": N, "arguments": {...}}`
+    (or "parameters", or the arguments as a JSON string), optionally inside a Markdown fence (```json ... ```).
+    Anything that is not a declared tool's call -> None."""
+    body = body.strip()
+    m = _JSON_FENCE.match(body)
+    if m:
+        body = body[m.end():].rstrip()
+        body = body[:-3] if body.endswith("```") else body
+    try:
+        obj = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(obj, dict) or not isinstance(obj.get("name"), str) or obj["name"] not in schemas:
+        return None
+    args = obj.get("arguments", obj.get("parameters", {}))
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            return None
+    if args is None:
+        args = {}
+    return ToolCall(name=obj["name"], arguments=args) if isinstance(args, dict) else None
+
+
 def parse_tool_call(body: str, schema: dict | None = None) -> ToolCall:
     """`<function=NAME>\\n<parameter=P>\\nVALUE\\n</parameter>...</function>` -> ToolCall. Values are JSON-decoded
     when the tool's schema says the parameter is not a string (or, without a schema, when they parse as JSON
@@ -601,11 +628,13 @@ class OutputParser:
     """Incremental parser of the model's text. Feed deltas; get events. A tag split across deltas is held back
     until it is complete, so clients never see `<tool_` or `</thi`."""
 
-    def __init__(self, thinking: bool = True, tools: list[dict] | None = None, stream_tools: bool = False):
+    def __init__(self, thinking: bool = True, tools: list[dict] | None = None, stream_tools: bool = False,
+                 recover: bool = False):
         self.state = "reasoning" if thinking else "content"
         self.buf = ""
         self.lead = False
         self.schemas = {t.get("name"): t for t in tools or []}
+        self.tool_call_recovery = bool(recover)   # #2037: read a declared tool's JSON call inside <tool_call> too
         # stream_tools: a tool call is also reported while it is being written - "tool_start" (its name and id) as
         # soon as the name is known, then "tool_args" pieces of its JSON arguments (string parameters character by
         # character; other types whole, once complete) - before the final "tool_call".  Without it, a client sees
@@ -802,6 +831,8 @@ class OutputParser:
                             call = parse_tool_call(body[:end], self.schemas.get(name))
                     except ValueError:
                         pass
+                    if call is None and self.tool_call_recovery:
+                        call = json_tool_call(body[:end], self.schemas)   # #2037: the call as JSON, in a fence or bare
                     raw = self.buf[:len(CALL_START) + end + len(CALL_END)]
                     if call is not None or self.pending:
                         self.pending.append([raw, call])    # settled by what follows it (see __init__)

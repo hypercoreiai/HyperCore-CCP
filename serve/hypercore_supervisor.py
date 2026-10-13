@@ -240,6 +240,15 @@ class HyperCoreProcessSupervisor:
         self._config_side_files.append(path)
         return path
 
+    def allow_deliberate_restart(self) -> None:
+        """Make room for one restart the user asked for.
+
+        max_restarts is a crash budget: it stops a worker that keeps dying from being respawned forever. A Stop and
+        Start from the page is not a crash, and three of them must not use the budget up and leave every later
+        request running against a worker that is no longer there.
+        """
+        self.max_restarts = max(self.max_restarts, self._restarts + 1)
+
     def start_worker(self, timeout_s: float | None = None) -> bool:
         """Start the worker, or bring it back if it died. False means the budget is spent.
         This is the only lifecycle entry point a server should use.

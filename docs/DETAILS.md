@@ -535,9 +535,12 @@ server, three server options (all off by default; also as keys in `hypercore-<mo
 | `--idle-unload 600` | `"idle_unload_s": 600` | unload the model after 600 s without requests; the next request loads it again |
 | `--min-free-vram-mib 11000` | `"min_free_vram_mib": 11000` | load an unloaded model only when that much VRAM is free (it waits up to 15 s for memory being given back), else answer **503** "the GPU is in use by another program" instead of starting into what a game left (with several GPUs it checks the first one) |
 | `--before-load "cmd"` | `"before_load": "cmd"` or `["cmd", "arg"]` | a command run before the model is loaded again, e.g. one that unloads another server's model |
+| `"before_load_timeout_s": 120` | | how long that command may run (default 120 s). When it exits non-zero or times out (a peer that is not running makes `curl` exit 7), the free VRAM decides: with `min_free_vram_mib` set and not enough free, the model is **not** loaded and the request gets **503** with `Retry-After`; with room (or no limit set) it loads, with a warning in the log. `"before_load_strict": true` always refuses on a failure, `"before_load_ignore_failure": true` always loads |
 
 `POST /unload` unloads it now (`409` while a request is running) and `POST /load` loads it ahead of a request (both
 with `Content-Type: application/json`, e.g. `curl -X POST -H "Content-Type: application/json" localhost:8081/unload`);
+`POST /unload?wait=60` waits up to 60 s (a bare `?wait` uses 300) for the running turn to finish first, so a peer that
+wants the GPU back gets the turn's time instead of a 409 on the first try.
 `/health` says `"loaded"`, `/v1/models` lists it as `unloaded` (like llama.cpp's router), `/props` sets
 `is_sleeping` and the Monitor shows the state. Unloading ends the engine process - and the image encoder, when images
 are on; it is started again first, as at a start - so their VRAM and RAM go straight back. The model files stay in
@@ -567,6 +570,28 @@ it instead of the config's `--expert-profile` when it is a profile of the same m
 before). A relative path is in the HyperCore folder; one file per model, and a profile per project works the same way
 (point the key at another file). The file is a fingerprint of what you used the model for: it stays on your PC.
 Without the key nothing is counted or written. Setup rewrites the config when run again: add the key again then.
+
+**The free figure moves after startup (#2065).** The `... MiB of VRAM free with everything loaded` line is read before
+the verify windows are captured: each captured window, and each `--batch` slot layout, takes some tens of MiB (538 MiB
+at that line was 395 MiB after the last capture, an RTX 4090 D with `--batch 2` at 262,144 context). Below about a
+gigabyte on Windows the driver can page GPU memory to system RAM instead of failing: decode fell from 91 to 3 tok/s at
+70K tokens and then a window never finished, the watchdog stopping the engine after 60 s. Each request now re-reads the
+free VRAM and says `WARNING: only N MiB of VRAM free at the start of this request` once it is under 1 GiB (512 MiB
+elsewhere), with the `--vram-reserve-mib` that would leave room; the stall report prints the figure too. The engine
+only says it; the fix is a larger `--vram-reserve-mib`, a smaller `--max-context` or `--batch`, or `Prefer No Sysmem
+Fallback` for the engine.
+
+**A stall named "request" can be the OS paging the engine's own memory (#2049).** Before a request that switches
+conversation the engine parks the outgoing one in RAM: copies of its running checkpoints and K/V, which then sit in
+ordinary memory until the conversation comes back. On a 64 GB PC with `--resident-budget-gib 40`, an 8 GiB conversation
+cache and a 256K context, the working set was 8-30 GB of 56 GB committed and the engine took about 190 page faults a
+second (under 1 MB/s when each is a pagefile read): one silent step of more than 60 s, five times. The `verify window
+(last window, not the current stage) ... host at layer step 48; the GPU rang 48` line in that report is the previous
+request's last window, not the stalled one. The park is named in the stage (`request: parking the previous
+conversation`), its copies report progress to the watchdog in 1 MiB slices, and an MTP draft wait is named as
+`mtp draft: waiting for the GPU` so it no longer reads as the verify window before it. Windows counts page faults at 8
+a unit instead of 64 when it decides whether the file tier is busy. The cure for the slowness itself is memory: a
+smaller `--resident-budget-gib`, a smaller `--conversation-cache-mib`, or the pagefile on an SSD.
 
 ---
 
@@ -636,6 +661,12 @@ print(r.choices[0].message.content)
   `"recover"` needs the exact xhigh sentence in the first system message and skips requests with images; re-reading
   the changed prefix costs prompt time. Either mode can mistake repeated useful code or checks for a loop, so keep
   the recorded answer quality alongside the completion rate when testing it.
+- **A tool call written as JSON (`"tool_call_recovery"`, off by default, #2037).** Inside a `<tool_call>` the
+  template expects `<function=NAME>`. With `"tool_call_recovery": true` in `hypercore-<model>.json`, a declared tool's
+  call written as `{"name": ..., "arguments": ...}` is read as the call too, bare or inside a Markdown fence
+  (```json ... ```), with the arguments under `arguments`, `parameters`, or as a JSON string. A name that is not in
+  the request's tools, or text that is not valid JSON, stays the reasoning text it was. Off by default, so what a
+  client receives is unchanged unless you turn it on.
 - **A turn is asked whether its work is finished (`"turn_tail_check"`, on by default).** On `/v1/chat/completions`,
   `/v1/messages` and `/v1/responses`, when a turn would end the server appends one short turn asking the model to
   check its answer against the request and reply `done` if every task is complete. A bare confirmation ends the turn;
@@ -1386,6 +1417,14 @@ and **404** for an unknown model. Existing `/load` and `/unload` behavior is pre
 Ctrl+C and SIGTERM use, and `main()` then closes the HTTP listener, the model engine, the image encoder and
 the MCP servers in that order. It answers immediately with what is being closed; the process exits when the
 engine has freed its memory.
+
+`POST /v1/stop` and `POST /v1/start` are the engine-only pair. `/v1/stop` unloads the engine,
+closes the MCP servers and frees the image encoder, and **does not** end the process; a request
+that arrives while the engine is stopped is answered **409** `engine_stopped` rather than with an
+empty turn. `/v1/start` brings the engine back (and reopens the MCP hub). The banner's Shut Down
+button does not use them - it closes the server - and the composer's Start button sends a prompt,
+not this call. Both need `application/json` and no foreign Origin, as the other control routes do.
+Closing the server itself is still Ctrl+C, SIGTERM or `./restart.sh stop`.
 
 Unloading and shutdown close the native engine's stdin after sending `QUIT`, allowing Windows' detached
 stdin reader to see EOF. Cleanup waits for process exit before releasing handles; if forced shutdown still

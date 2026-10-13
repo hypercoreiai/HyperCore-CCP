@@ -3,6 +3,7 @@ import json
 import io
 import os
 import subprocess
+import threading
 import time
 import unittest
 import urllib.error
@@ -147,6 +148,94 @@ class Lifecycle(unittest.TestCase):
         with response:
             data = response.read().decode()
             return response.status, data if "event-stream" in response.headers.get("Content-Type", "") else json.loads(data)
+
+    def raw(self, path, body=None):
+        """The same, but with the response headers: a test of Retry-After needs them."""
+        req = urllib.request.Request(self.base + path, data=json.dumps(body).encode() if body is not None else None,
+                                    headers={"Content-Type": "application/json"})
+        try:
+            response = urllib.request.urlopen(req, timeout=10)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            response.read()
+            return response.status, response.headers
+
+    def test_unload_wait_reads_the_query(self):
+        from serve.server import unload_wait
+        self.assertIsNone(unload_wait(None, 300.0))          # no `wait`: unload now, 409 if a request is running
+        self.assertEqual(unload_wait("", 300.0), 300.0)     # a bare `wait`: the default
+        self.assertEqual(unload_wait("60", 300.0), 60.0)
+        self.assertEqual(unload_wait("nonsense", 300.0), 300.0)
+
+    def test_unload_wait_waits_for_a_running_request_to_finish(self):
+        # #1997: a peer that wants the GPU back gets the running turn's time instead of a 409 on the first try
+        self.request("/v1/load", {"model": self.svc.model})
+        self.svc.fifo.acquire()
+        waiter = threading.Thread(target=lambda: (time.sleep(0.3), self.svc.fifo.release()))
+        waiter.start()
+        code, body = self.request("/unload?wait=2", {"model": self.svc.model})
+        waiter.join()
+        self.assertEqual(code, 200, body)
+        self.assertEqual(body["status"], "unloaded")
+        self.assertTrue(self.engine.unloaded)
+
+    def test_unload_without_wait_answers_busy_while_a_request_holds_the_slot(self):
+        self.request("/v1/load", {"model": self.svc.model})
+        self.svc.fifo.acquire()
+        try:
+            code, body = self.request("/unload", {"model": self.svc.model})
+            self.assertEqual(code, 409, body)
+            self.assertEqual(body["status"], "busy")
+        finally:
+            self.svc.fifo.release()
+
+    def test_a_before_load_command_that_fails_is_not_ignored_when_the_card_is_full(self):
+        # #1997: the hook's exit code alone does not refuse (a peer that is not running also makes curl fail);
+        # the free VRAM decides, and the 503 says both
+        self.svc.before_load = "false"
+        self.svc.min_free_vram_mib = 1000
+        self.svc.vram_free_wait_s = 0.0
+        self.svc.free_vram_mib = lambda: 100
+        code, body = self.request("/v1/load", {"model": self.svc.model})
+        self.assertEqual(code, 503)
+        self.assertIn("before_load command failed", body["error"]["message"])
+        self.assertIn("min_free_vram_mib", body["error"]["message"])
+        self.assertEqual(self.engine.starts, 0, "the engine was not started into 100 MiB")
+
+    def test_a_before_load_command_that_fails_loads_when_the_card_is_free(self):
+        self.svc.before_load = "false"
+        self.svc.min_free_vram_mib = 1000
+        self.svc.free_vram_mib = lambda: 8000
+        code, body = self.request("/v1/load", {"model": self.svc.model})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(self.engine.starts, 1)
+
+    def test_before_load_ignore_failure_skips_the_vram_check(self):
+        self.svc.before_load = "false"
+        self.svc.min_free_vram_mib = 1000
+        self.svc.before_load_ignore_failure = True
+        self.svc.free_vram_mib = lambda: 100
+        code, body = self.request("/v1/load", {"model": self.svc.model})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(self.engine.starts, 1)
+
+    def test_before_load_strict_refuses_without_reading_the_card(self):
+        self.svc.before_load = "false"
+        self.svc.before_load_strict = True
+        self.svc.min_free_vram_mib = 0
+        code, body = self.request("/v1/load", {"model": self.svc.model})
+        self.assertEqual(code, 503)
+        self.assertIn("the GPU was not given back", body["error"]["message"])
+        self.assertEqual(self.engine.starts, 0)
+
+    def test_a_busy_gpu_503_carries_retry_after(self):
+        self.svc.min_free_vram_mib = 1000
+        self.svc.free_vram_mib = lambda: 100
+        self.svc.vram_free_wait_s = 0.0
+        code, headers = self.raw("/v1/load", {"model": self.svc.model})
+        self.assertEqual(code, 503)
+        self.assertEqual(headers.get("Retry-After"), "15")
 
     def test_discover_chat_unload_and_stream_reload(self):
         self.assertEqual(self.request("/api/health")[1]["service"], "hypercore")
