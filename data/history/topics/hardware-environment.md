@@ -1,6 +1,6 @@
 # Hardware and environment
 
-Accumulated from 29 transcripts, 73 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 37 transcripts, 93 entries. Built 2026-10-13. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state
@@ -31,11 +31,29 @@ headless Playwright path.
 how the thing works, as the chats established it
 
 
-**--pcie-frac** · 2 chats
+**--pcie-frac** · 5 chats
+- The differences that change how the model computes: `--pcie-frac` is the one that matters.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
+- Your log shows it in action: With no `--pcie-frac`, 18,848 experts per request are copied to the GPU and computed there instead of on the CPU pool.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
+- RAM is MemTotal in GiB (31 here), PCIe is the display device's link (16.0 GT/s = gen 4, x16), not the fastest link on the board, which is what actually decides whether a `--pcie-frac` result transfers.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-17-13.md</sub>
 - With a page-locked copy the GPU also takes its usual share of the misses over PCIe (`--pcie-frac`), as with enough RAM; `--pcie-frac 0` (or `STRATA_RESIDENT_PIN=0`) gives the mapp [showing 8000 of 8001 characters read; the rest is not included.
   <sub>2026-10-04 · strata-chat-2026-10-04-03-57.md · also in strata-chat-2026-10-03-14-03.md</sub>
 - the share of the experts missing from VRAM that are copied to the GPU instead of computed by the CPU (`--pcie-frac`: a fast PCIe link and a slower CPU want more, a laptop's narrower link less);
   <sub>2026-10-03 · strata-chat-2026-10-03-14-03.md</sub>
+
+**--adapt-swaps** · 2 chats
+- `--pcie-frac 0.00` + `--resident-experts` + `--adapt-swaps` — docs DETAILS.md line ~95-100 explicitly: "Through the server, two more things carry over from one request to the next (#410): the adaptive tier moves experts between RAM and VRAM (the GPU and the CPU round an expert differently), and the prompt cache resumes a repeated prompt and reads only its tail through the decode path.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
+- So the config's `--pcie-frac 0.00` is already the deterministic arm, but `--prompt-cache` is left at its default 6 and `--adapt-swaps` at 96 — the two switches the docs say you must also set for identical repeats.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
+
+**installed engine install** · 2 chats
+- When the engine exited at boot (your trial 1: `vram=512, kv=fp16, pcie=0.33` at 131072 context is a plausible MTP/VRAM boot failure), Python flushed that buffer during GC and printed `Exception ignored while finalizing file <_io.TextIOWrapper name=5>`.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-14-31.md</sub>
+- I installed the engine on this box — `pip install --break-system-packages invisible-playwright` → wrapper 0.27.0, engine fetched — and the server reached the launch step, which reports: `apt-get install xvfb` timed out against the tool's 90 s cap, so the real-engine path is not yet exercised — the live case skips with that sentence rather than failing.
+  <sub>2026-10-07 · strata-chat-2026-10-07-07-26.md</sub>
 
 **session_id hash pcie** · 2 chats
 - `pcie-frac 0.00` and `spec-min-p 0.70` are real, in `~/Strata/strata-q2_0.json`.
@@ -55,7 +73,7 @@ how the thing works, as the chats established it
 
 **.so**
 - Is the SYCL/HIP side expected to implement this contract, or is the `.so` CUDA-only for v1? If the 25-header `sycl/` tree is meant to implement it, the contract needs a capability-negotiation step now — otherwise you ship a C API that is a CUDA wrapper with a neutral name, which is the failure mode your third decision was specifically trying to avoid.
-  <sub>2026-10-09 · strata-chat-2026-10-09-18-55.md</sub>
+  <sub>2026-10-09 · strata-chat-2026-10-09-18-55.md · also in 2026-10-09-strata-chat-2026-10-09-18-55.md</sub>
 
 **/home/ai-agent/strata**
 - `git status` in `/home/ai-agent/Strata` works — no "dubious ownership"
@@ -111,7 +129,7 @@ how the thing works, as the chats established it
 
 **cublas_v2.h**
 - One source tree, three GPU backends. CUDA is the native dialect; AMD is reached by a header shim (`include/strata/hip_compat/`, `include/strata/platform/hip_compat/`) that redefines `cuda_runtime.h`/`cublas_v2.h` onto HIP so "the engine's sources stay one tree" (`include/strata/platform/hip_compat/strata_hip.h:2-6`).
-  <sub>2026-10-09 · strata-chat-2026-10-09-08-03.md</sub>
+  <sub>2026-10-09 · strata-chat-2026-10-09-08-03.md · also in 2026-10-09-strata-chat-2026-10-09-08-03.md</sub>
 
 **cudahostregister**
 - Potential issue: If `cudaHostRegister` fails for a slice due driver refusal, break.
@@ -121,6 +139,10 @@ how the thing works, as the chats established it
 - The `Niko1221/HyperCore` links in `README.md`, `docs/INSTALL.md`, `docs/MCP_SERVER.md`, `docs/STRIX_HALO.md`, and the PR/issue references in `docs/AMD_HIP_PERFORMANCE.md` and `docs/INTEL_ARC.md` are the upstream source of the code, not your project.
   <sub>2026-10-10 · strata-chat-2026-10-10-07-17.md</sub>
 
+**docs/details.md**
+- `docs/DETAILS.md` says of this exact path: "the PCIe share of the missed experts (computed on the GPU instead of the CPU) still made the first answer after a start differ from the next ones." And issue #31 is a documented bug in precisely this expert-copy path for the IQ packs ("the experts are now copied by a GPU kernel, `--pcie-mode dma` restores the old way").
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
+
 **downloads/**
 - Permission layer separate from execution — new `serve/tool_permissions.py` Ownership rule, not a path rule: a file this process created, or anything under `scratch/`, `tmp/`, `downloads/`, is free; anything else is refused with a reason and a `force=true` escape hatch.
   <sub>2026-10-05 · strata-chat-2026-10-05-23-07.md</sub>
@@ -128,6 +150,10 @@ how the thing works, as the chats established it
 **expert_multi_test**
 - The failure is `expert_multi_test`, which exits with "this CPU cannot run the expert kernel: missing AVX512F/BW/VL/VNNI/VBMI" — a hardware guard on this box, not the rename.
   <sub>2026-10-10 · strata-chat-2026-10-10-07-17.md · also in strata-chat-2026-10-10-07-17.md</sub>
+
+**find_history globs model**
+- `find_history()` globs `_<model>_<objective>_<cntx>.json` and keeps only files whose CPU, GPU, RAM and PCIe generation match.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-17-13.md</sub>
 
 **get_caps**
 - Does `get_caps` need to report the instance baseline? The supervisor can read `max_batch_slots` and `max_context_len`, but it cannot ask "what pcie_frac is this instance running with".
@@ -156,10 +182,6 @@ how the thing works, as the chats established it
 **hypercorerequesthandler.info**
 - `serve/server.py`'s `HyperCoreRequestHandler.info` now reports the instance's `pcie_frac` / `spec_min_p` / `pool_workers` from the worker's CAPS reply, so the sweep tunes against the baseline it is really running rather than the product defaults.
   <sub>2026-10-10 · strata-chat-2026-10-10-12-04.md</sub>
-
-**installed engine install**
-- I installed the engine on this box — `pip install --break-system-packages invisible-playwright` → wrapper 0.27.0, engine fetched — and the server reached the launch step, which reports: `apt-get install xvfb` timed out against the tool's 90 s cap, so the real-engine path is not yet exercised — the live case skips with that sentence rather than failing.
-  <sub>2026-10-07 · strata-chat-2026-10-07-07-26.md</sub>
 
 **next_step**
 - `next_step` is now "build `pack/full` locally, run CUDA-vs-CPU parity on the 4090" — no Daytona GPU credits required.
@@ -191,7 +213,7 @@ how the thing works, as the chats established it
 
 **prompts/prompt.json**
 - Cause. The dropdown is built at run time from `GET /prompts`, and that endpoint reads `ROOT / "prompt.json"` — but this repo ships the profiles in `prompts/prompt.json`.
-  <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md</sub>
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md · also in 2026-10-11-hypercore-chat-2026-10-11-06-34.md</sub>
 
 **rules same field**
 - Two rules for the same field, and the second clause (`or req.pcie_frac < -1.0`) is subsumed by the first, so the guard is just "reject outside [-1, 1]".
@@ -229,6 +251,10 @@ how the thing works, as the chats established it
 - They cluster by module exactly as the code does: Note the collision: `STRATA_BUILD_CONVERSATION_TESTS` and `STRATA_ENABLE_HIP` are both CMake options and identifiers in the source — the build-time and runtime namespaces overlap, which is a real footgun when mapping this surface.
   <sub>2026-10-09 · strata-chat-2026-10-09-08-03.md</sub>
 
+**test_web_client.py**
+- The test style is contract-based rather than smoke-based: `test_web_client.py` asserts on the shipped JS and HTML, so a UI change that breaks behaviour fails a test.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-00-06.md</sub>
+
 **timeout_s hard ceiling**
 - `timeout_s: 90` is a hard ceiling on every tool call. I hit it twice this session: `sudo apt-get install -y xvfb` with `timeout_s: 300` returned `error: tools/call timed out after 90 s`.
   <sub>2026-10-07 · strata-chat-2026-10-07-09-31.md</sub>
@@ -236,6 +262,14 @@ how the thing works, as the chats established it
 **tools/hip**
 - One note: while confirming that pre-existing failure I used `git stash`, which briefly reverted the repo's uncommitted tracked changes; I restored them and the working tree is back to its original state (`git stash list` is empty, the `tools/hip` and `tools/vision` edits intact).
   <sub>2026-10-06 · strata-chat-2026-10-06-00-55.md</sub>
+
+**universal home user0**
+- The … [universal] /home/ai-user0/_Strata/docs/AMD_HIP.md … Since 0.1.39 a tuning run by hand (`./setup.sh --calibrate`) is saved for the AMD card it ran on and reused when setup runs again.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-08-16.md · also in hypercore-chat-2026-10-13-08-16.md</sub>
+
+**wait actually ni_hypercore**
+- Wait — actually in ni_hypercore-q2_0.json, `--pcie-frac 0.00` IS set.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
 
 **xvfb**
 - Run `STRATA_TEST_LIVE=1 python3 serve/mcp/tests/run_all.py --server browser` once `xvfb` is present to close that gap.
@@ -253,6 +287,10 @@ what was chosen, and why, oldest first
 **add_test**
 - Do you want the C++ test suite wired into CI? It requires `tests/CMakeLists.txt` (or enabling the inline `add_test` blocks) and a CUDA/HIP-free path on `ubuntu-latest`; right now it can't run there at all.
   <sub>2026-10-10 · strata-chat-2026-10-10-03-30.md</sub>
+
+**applied core expert_source**
+- applied at `src/core/expert_source.cpp:3692-3712`, zeroed rows counted at `:3865-3868` When it is on. On by default (rank 7) on CUDA builds since 0.1.42, and on HIP gfx1200/gfx1201 since 0.1.43.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-03-22.md</sub>
 
 **test added serve**
 - Test added: `serve/test_server.py AmdTelemetry.test_pcie_link_is_the_narrowest_slowest_hop`.
@@ -277,9 +315,23 @@ numbers actually measured, not estimated
 - A refactor of an 11k-line driver is exactly the kind of change that would need that same paired-measurement discipline before it's adopted — and I can't run it here: the 4090 is holding 24,074 of 24,564 MiB and a 4 KB `cudaMalloc` from a second process returns `out of memory`.
   <sub>2026-10-09 · strata-chat-2026-10-09-16-17.md</sub>
 
+**nvidia-smi** · 2 chats
+- `nvidia-smi` reports 834 MiB free on the RTX 4090, and pid 2247278 (`/home/ai-user0/black_box/serve/server.py --engine hypercore --config /home/ai-user0/black_box/max_run_q2_0.json --port 8081`) has been up 55 minutes and is still serving requests.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-03-22.md</sub>
+- Status: code done and building; the four measurements are blocked on the GPU, which your own serve instance is holding. Done, verified in this session Blocked `nvidia-smi` shows 26 MiB free of 24564, held by pid 1246988 (`engine/hypercore --serve`), child of pid 1246985, whose parent is your shell (bash 21365), not a job I started.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-22-55.md</sub>
+
+**--selftest**
+- `nvidia-smi` reports 38 MiB free right now: serve holds the GPU, so the `--selftest` run and the two A/Bs (`HYPERCORE_ADAPT_OVERLAP`, `HYPERCORE_MMVQ_IL`) cannot run.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-22-55.md</sub>
+
 **3090 takes most**
 - A 3090's 24 GB takes most of the CPU work away.
   <sub>2026-10-03 · strata-chat-2026-10-03-14-03.md</sub>
+
+**build-shared/hypercore-worker**
+- Also, `--short --dry-run` no longer runs a real calibration; it says so and falls back to the staged sweep: The next blocker you will hit `nvidia-smi` reports 28 MiB free right now: `serve/server.py` (pid 1646195) is running with `build-shared/hypercore-worker` holding the card.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-13-18.md</sub>
 
 **cudaerrornokernelimagefordevice**
 - The GPU is dead for this build. `torch 2.10.0+cu128` reports `cuda.is_available() == True` but every kernel call fails: "GTX 1060 3GB with CUDA capability sm_61 is not compatible with the current PyTorch install" → `cudaErrorNoKernelImageForDevice`.
@@ -301,9 +353,21 @@ numbers actually measured, not estimated
 - The defensible statement from this workspace is narrower: on this RTX 4090 the working configuration is `--pcie-frac 0.00 --spec-min-p 0.50 --pool-workers 10` (recorded in `2026-10-03/04/08-community-rtx4090-iq3xxs-200k-{code,ru}/env.json`), with decode in the 135-155 tok/s band, and `STRATA_KV_PREFETCH=1` and `"parallel": 2` both measured as losses here (2-4% and 28% respectively).
   <sub>2026-10-11 · hypercore-chat-2026-10-11-15-51.md</sub>
 
+**expert cache auto**
+- With `--expert-cache auto` filling 15.94 GiB and resident RAM mode, the VRAM is nearly full → the driver pages GPU memory to system RAM → decode degrades → the model emits garbage/CJK spam/empty.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
+
+**guard more experts**
+- The guard. If 90% or more of the experts are already in the GPU cache (60% on a HIP layer split), the default is not set and you get the opposite message: `STRATA_ROUTE_TAIL_SKIP is off by default: X% of the experts are in the GPU cache, so few are missed and skipping costs more draft acceptance than it saves`.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-03-22.md</sub>
+
 **live decode throughput**
 - From the live log, decode throughput against prompt length: Expert cache hit rate is 97.5–98.3% across that range, with only 1.3–2.7% of routed experts read over PCIe — at ~785 KB per blob that is well under 1 GB/s, nowhere near the PCIe limit.
   <sub>2026-10-10 · hypercore-chat-2026-10-10-18-06.md</sub>
+
+**max_run_q2_0.json**
+- Next step, when you are willing to stop the live server: It will warm-start from `optuna_tune/history/Intel-Core-i9-14900KF_NVIDIA-GeForce-RTX-4090_31GB_PCIe4x16_q2_0_gen_131072.json` (5 configurations already measured there) and rewrite `max_run_q2_0.sh` / `max_run_q2_0.json`.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-17-13.md</sub>
 
 **qwen/qwen2.5-1.5b-instruct**
 - Constraint found: the GPU is fully held by the Strata engine (PID 71501, 23.5 / 24.5 GiB), so `Qwen/Qwen2.5-1.5B-Instruct` OOM'd on CUDA → the benchmark ran on CPU.
@@ -320,3 +384,12 @@ numbers actually measured, not estimated
 **wait machine 5090**
 - Wait — but this machine is an RTX 5090 with 64GB per the earlier tests.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-13-20.md</sub>
+
+## Still open
+
+not done, deferred, or waiting on a decision
+
+
+**nvidia-smi**
+- Not yet done: no real engine measurement, because `nvidia-smi` reported 28 MiB free (a server is running).
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-14-31.md</sub>

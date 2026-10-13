@@ -29,9 +29,12 @@ from pathlib import Path
 
 # Transcript folders, read in the order given. The current tree is in ~/black_box_chats;
 # ~/Strata_chats is the older one and is merged in the same pass, so a fact learned
-# before the restart is not lost. Override with CHAT_SOURCE (comma separated) or --source.
-DEFAULT_SOURCES = (Path("/home/ai-user0/black_box_chats"), Path("/home/ai-user0/Strata_chats"))
+# before the restart is not lost. data/history/_old_chats holds the pre-scrubber transcripts
+# that are already in the repository, so a rebuild on a fresh clone sees them too.
+# Override with CHAT_SOURCE (comma separated) or --source.
 HIST = Path(__file__).resolve().parents[1] / "data" / "history"
+DEFAULT_SOURCES = (Path("/home/ai-user0/black_box_chats"), Path("/home/ai-user0/Strata_chats"),
+                   HIST / "_old_chats")
 
 
 def parse_sources(value: str | None) -> list[Path]:
@@ -180,6 +183,15 @@ def topic_scores(sentence: str) -> dict[str, int]:
 def chat_date(name: str) -> str:
     m = re.search(r"(\d{4})-(\d{2})-(\d{2})", name)
     return "-".join(m.groups()) if m else "unknown"
+
+
+def chat_filename(name: str, when: str) -> str:
+    """The summary file for one transcript: <date>-<name>. A transcript whose own name already
+    starts with its date (the archived _old_chats tree) must not get the date twice."""
+    stem = Path(name).stem
+    if stem.startswith(f"{when}-"):
+        stem = stem[len(when) + 1:]
+    return f"{when}-{stem}.md"
 
 
 def turns(text: str) -> list[tuple[str, str]]:
@@ -476,7 +488,7 @@ def main() -> int:
         body += [f"- {q}" for q in s["asks"]]
         body.append("\n## What came of it")
         body += [f"- {o}" for o in s["outcomes"]] or ["- nothing that survived the transcript"]
-        (HIST / "chats" / f"{s['date']}-{Path(name).stem}.md").write_text("\n".join(body) + "\n",
+        (HIST / "chats" / chat_filename(name, s["date"])).write_text("\n".join(body) + "\n",
                             encoding="utf-8")
 
     (HIST / "index.json").write_text(json.dumps({

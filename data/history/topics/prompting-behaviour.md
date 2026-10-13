@@ -1,6 +1,6 @@
 # Prompting, agents and turn behaviour
 
-Accumulated from 12 transcripts, 20 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 16 transcripts, 26 entries. Built 2026-10-13. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state
@@ -45,6 +45,12 @@ how the thing works, as the chats established it
 - `run_flags()` / `write_run_script()` read the config and emit `--turn-tail-check` in `run-<model>.sh` / `.bat`; a config that says `false` is respected.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-07-09.md</sub>
 
+**--no-turn-tail-check** · 2 chats
+- To check / turn it off: `GET /v1/status` reports `"turn_tail": {"enabled", "max_checks", "custom_prompt"}`; set `"turn_tail_check": false` or `"turn_tail_checks": 0` in the run config, or launch with `--no-turn-tail-check`.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
+- `--no-turn-tail-check` as a per-model setting. The flag exists and is remembered in the config; a global off switch for a whole install is not.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-21-39.md</sub>
+
 **--api-key**
 - `--no-turn-tail-check` is the off switch; `--host` / `--api-key` still win.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-07-09.md</sub>
@@ -54,8 +60,8 @@ how the thing works, as the chats established it
   <sub>2026-10-07 · strata-chat-2026-10-07-17-37.md</sub>
 
 **--tail-role-token**
-- `effort_position: "end"` needs engine ≥ 0.1.39. You're on 0.1.40, so it will apply; on startup it prints `effort_position end: a request's non-default reasoning effort goes right before the answer, so changing it keeps the cached conversation` and adds `--tail-role-token` to the args.
-  <sub>unknown · context.txt</sub>
+- You're on 0.1.40, so it will apply; on startup it prints `effort_position end: a request's non-default reasoning effort goes right before the answer, so changing it keeps the cached conversation` and adds `--tail-role-token` to the args.
+  <sub>unknown · unknown-context.md · also in context.txt</sub>
 
 **.calibrate_progress.log**
 - `.calibrate_progress.log` shows: The calibrator starts its own worker while the live server (pid 998337, started 14:04, `--port 8081 --turn-tail-check`) already holds the model, so the second engine cannot get VRAM.
@@ -85,6 +91,14 @@ how the thing works, as the chats established it
 - On load or New Chat, insert a system message into the chat showing the injected system prompt + selected agent prompt (rendered as a collapsed card), and set the `messages` array to include `{role: "system", ...}` so apiMessages() includes it as the first message in the API request.
   <sub>2026-10-04 · strata-chat-2026-10-04-05-56.md</sub>
 
+**needs conditions transcript**
+- That needs the conditions from the transcript: a ~90k-token shared prefix (`prompt 88903 tokens = 0 reused + 89031 read` is in the log right now from the other client), thinking enabled, and `reasoning_budget_tokens: 24756` reached — at which point `serve/server.py:2682` injects `"\n\nI have thought about this long enough; time to give my answer.\n</think>\n\n"` into the resumed prefix.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
+
+**ni_hypercore-q2_0.json**
+- The `[hypercore] the reply reached max tokens while still thinking` line is just the advisory at `serve/server.py:2668`, and `ni_hypercore-q2_0.json` has no `reasoning_budget_tokens` key (checked with `jq`), so nothing caps the thinking by default.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-22-55.md</sub>
+
 **ni_run-q2_0.json**
 - Your live archive still uses `ni_run-q2_0.json` configs — do you want the personal variants kept as an example, or should the live system be migrated to the standard names?
   <sub>2026-10-10 · strata-chat-2026-10-10-05-20.md</sub>
@@ -97,6 +111,10 @@ how the thing works, as the chats established it
 - `reasoning_effort=high` is the second-biggest cost after prefill: round 14 alone produced 1,467 reasoning tokens.
   <sub>2026-10-04 · strata-chat-2026-10-04-03-57.md</sub>
 
+**reasoning_wrap_up**
+- The config has `reasoning_budget_tokens: 24756` → thinking is force-closed with an injected `REASONING_WRAP_UP` string, which is appended to the prompt for the next pass.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
+
 **yi_strata-q2_0.shared-settings.json**
 - The values in `yi_strata-q2_0.shared-settings.json` (temperature 0.7, top_p 0.95, top_k 20, reasoning_effort high) are simply dead.
   <sub>2026-10-07 · strata-chat-2026-10-07-09-31.md · also in strata-chat-2026-10-07-09-31.md</sub>
@@ -107,5 +125,14 @@ what was chosen, and why, oldest first
 
 
 **browser**
-- The rendered prefix changed. Switching agent profiles, adding an MCP server (I added `browser` this session — the tool catalog is part of the system prompt), or changing reasoning effort when it's rendered at the top of the prompt.
-  <sub>unknown · context.txt</sub>
+- Switching agent profiles, adding an MCP server (I added `browser` this session — the tool catalog is part of the system prompt), or changing reasoning effort when it's rendered at the top of the prompt.
+  <sub>unknown · unknown-context.md · also in context.txt</sub>
+
+## Gotchas
+
+things that bit once and will bite again
+
+
+**black_box every config**
+- And in `~/black_box/` it is on in every run config: The Strata config that's running now has no such key, so the tail check is off here (`svc.turn_tail_check = False` unless the config or the flag sets it).
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>

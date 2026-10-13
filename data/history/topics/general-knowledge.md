@@ -1,6 +1,6 @@
 # General knowledge outside the project
 
-Accumulated from 6 transcripts, 15 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 9 transcripts, 18 entries. Built 2026-10-13. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state
@@ -29,6 +29,16 @@ Anything else stays in the transcript.
 
 how the thing works, as the chats established it
 
+
+**home user0 venv** · 2 chats
+- The files are on 192.168.74.9 in /home/user0/Downloads/twitter-2026-10-07-d0b9e1eb6a91c60a08cffc18f496108e7a8523ce95ec22286c24751a000bd877/
+  <sub>2026-10-07 · 2026-10-07-strata-chat-2026-10-07-20-11.md</sub>
+- /home/user0/venv/lm-evaluation-harness/ is installed on 192.168.74.9.
+  <sub>2026-10-07 · 2026-10-07-strata-chat-2026-10-07-17-37.md</sub>
+
+**--adapt-swaps**
+- So the config's `--pcie-frac 0.00` is already the deterministic arm, but `--prompt-cache` is left at its default 6 and `--adapt-swaps` at 96 — the two switches the docs say you must also set for identical repeats.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
 
 **--batch**
 - If you meant HandBrake for video — I'm familiar with it: CLI is `handbrake -i input.mkv -o output.mp4 -e x265 -q 22`, presets live in `~/.config/HandBrake` on Linux, and batch queueing is via the queue UI or `--batch`.

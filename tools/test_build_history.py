@@ -213,8 +213,15 @@ class Source(unittest.TestCase):
 
     def test_the_default_is_the_current_tree_then_the_older_one(self):
         self.assertEqual([str(p) for p in BH.DEFAULT_SOURCES],
-                         ["/home/ai-user0/black_box_chats", "/home/ai-user0/Strata_chats"])
+                         ["/home/ai-user0/black_box_chats", "/home/ai-user0/Strata_chats",
+                          "/home/ai-user0/black_box/data/history/_old_chats"])
         self.assertEqual(BH.SOURCES, list(BH.DEFAULT_SOURCES))
+
+    def test_a_transcript_that_already_carries_its_date_is_not_named_twice(self):
+        self.assertEqual(BH.chat_filename("2026-10-03-strata-chat-2026-10-03-12-03.md", "2026-10-03"),
+                         "2026-10-03-strata-chat-2026-10-03-12-03.md")
+        self.assertEqual(BH.chat_filename("strata-chat-2026-10-03-12-03.md", "2026-10-03"),
+                         "2026-10-03-strata-chat-2026-10-03-12-03.md")
 
     def test_parse_sources_splits_a_comma_or_space_separated_list(self):
         got = BH.parse_sources("/a/b, /a/c")

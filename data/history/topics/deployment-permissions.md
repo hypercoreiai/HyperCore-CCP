@@ -1,6 +1,6 @@
 # Deployment, paths and permissions
 
-Accumulated from 42 transcripts, 147 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 52 transcripts, 163 entries. Built 2026-10-13. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state
@@ -39,11 +39,17 @@ how the thing works, as the chats established it
 - `/home` root is not writable, so it lives under `ai-user0`.
   <sub>2026-10-07 · strata-chat-2026-10-07-17-37.md</sub>
 - The default cache/target paths point at a non-writable root. `/home` itself is not writable, only `/home/user0/…`.
-  <sub>2026-10-03 · strata-chat-2026-10-03-18-25.md</sub>
+  <sub>2026-10-03 · strata-chat-2026-10-03-18-25.md · also in 2026-10-03-strata-chat-2026-10-03-18-25.md</sub>
 - `docs__create_file` path default is the main bug. Relative paths resolve against `/home`, which is not writable, so the most natural call (`path: "notes.md"`) fails with `[Errno 13] Permission denied`.
-  <sub>2026-10-03 · strata-chat-2026-10-03-15-05.md</sub>
+  <sub>2026-10-03 · strata-chat-2026-10-03-15-05.md · also in 2026-10-03-strata-chat-2026-10-03-15-05.md</sub>
 - directly under `/home`, which is not writable — the same permission wall that made `docs__create_file` fail on `tool_test/notes.md`.
   <sub>2026-10-03 · strata-chat-2026-10-03-15-05.md</sub>
+
+**/health** · 2 chats
+- Server is up and healthy. `serve/server.py` pid 1185977 on port 8081, worker pid 1185980 alive, `/health` returns `{"status": "ok", "loaded": true}`.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-22-55.md</sub>
+- Live: `python3 -m serve.hypercore_server --port 8125 --worker build-shared/hypercore-worker --socket /tmp/hc3.sock --config '{"batch":2}'` → `/health` 200, a 20-token completion streams and logs `[MONITOR] … decode_ms=39 tokens=20 drafts=20/100`, `/slots` returns the populated monitor, a dropped client issues `CMD_CANCEL` and `in_flight` returns to 0.
+  <sub>2026-10-09 · strata-chat-2026-10-09-22-41.md</sub>
 
 **/home/.ruff_cache** · 2 chats
 - Workaround: run it directly — `RUFF_CACHE_DIR=/home/user0/.ruff_cache /home/user0/.pyenv/versions/3.12.9/bin/python3 -m ruff check …` (the default `/home/.ruff_cache` is not writable).
@@ -111,9 +117,25 @@ how the thing works, as the chats established it
 - Similarly, Tier 3 (`jq`, `sqlite3`, `docker`, `gdb`) is on the allowlist but has no dedicated tool — `run` is enough for them, since they are single-purpose binaries rather than things needing a custom report.
   <sub>2026-10-03 · strata-chat-2026-10-03-15-05.md</sub>
 
+**home user0 venv** · 2 chats
+- The files are on 192.168.74.9 in /home/user0/Downloads/twitter-2026-10-07-d0b9e1eb6a91c60a08cffc18f496108e7a8523ce95ec22286c24751a000bd877/
+  <sub>2026-10-07 · 2026-10-07-strata-chat-2026-10-07-20-11.md</sub>
+- /home/user0/venv/lm-evaluation-harness/ is installed on 192.168.74.9.
+  <sub>2026-10-07 · 2026-10-07-strata-chat-2026-10-07-17-37.md</sub>
+
+**restart stop reports** · 2 chats
+- Run `./restart.sh stop` then `./optuna_tune/max_tune.sh --model q2_0 --gen --cntx 131072 --trials 40` and the same pair is rewritten from the fresh winner.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-17-13.md</sub>
+- `restart.sh stop` reports "the server stopped" but a new instance comes back within seconds, so it is being relaunched by something outside this session.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-22-55.md</sub>
+
 **--flag**
 - I verified your numbers before answering, because the plan's credibility depends on them: `src/program/generate.cpp` is exactly 11,102 lines, `struct Options` spans 310–642 with 164 `--flag` handlers, `include/strata/` is 108 headers / 12,141 lines, and the core→kernels fan-out is real (22 `kernels/native`, 10 `kernels/s`, 9 `kernels/qsa`, 9 `kernels/kv`, 7 each quantize/elementwise/cpu-pool).
   <sub>2026-10-09 · strata-chat-2026-10-09-16-17.md</sub>
+
+**--out**
+- Try to rebuild; if data/history is not writable, report it and offer the `--out` path.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-17-31.md</sub>
 
 **.dockerignore**
 - `.gitignore`, `.dockerignore`, `Makefile`, `LICENSE` write through the document tools; an extensionless ELF is still refused read and write.
@@ -139,10 +161,6 @@ how the thing works, as the chats established it
 - The generated non-comment rule lines are byte-identical to the live `/etc/sudoers.d/ai-user0` (17 lines, `identical: True`).
   <sub>2026-10-05 · strata-chat-2026-10-05-23-31.md</sub>
 
-**/health**
-- Live: `python3 -m serve.hypercore_server --port 8125 --worker build-shared/hypercore-worker --socket /tmp/hc3.sock --config '{"batch":2}'` → `/health` 200, a 20-token completion streams and logs `[MONITOR] … decode_ms=39 tokens=20 drafts=20/100`, `/slots` returns the populated monitor, a dropped client issues `CMD_CANCEL` and `in_flight` returns to 0.
-  <sub>2026-10-09 · strata-chat-2026-10-09-22-41.md</sub>
-
 **/home/ai-agent**
 - All non-Docker files that referenced `/home/user0` are now pointed at `/home/ai-agent`.
   <sub>2026-10-03 · strata-chat-2026-10-03-18-59.md</sub>
@@ -154,6 +172,10 @@ how the thing works, as the chats established it
 **/home/ai-agent/.terminal/retest_report.json**
 - The default report is `/home/ai-agent/.terminal/retest_report.json`.
   <sub>2026-10-04 · strata-chat-2026-10-04-06-01.md</sub>
+
+**/home/ai-agent/hypercore-data**
+- The engine root is `/home/ai-agent/HyperCore-data` for the model files and `/home/ai-user0/black_box` for the binary (`engine/hypercore`, engine 0.1.42).
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-11-07.md</sub>
 
 **/home/ai-agent/strata/serve/test_docs_mcp.py**
 - `/home/ai-agent/Strata/serve/test_docs_mcp.py` hardcoded `/home/user0/Strata/.venv/bin/python3` and the script path About the sudo password: it wasn't needed — everything was writable as `ai-agent` (the MCP files are owned by `ai-agent`, and `/home/user0/downloads` has an ACL granting `ai-agent` rwx).
@@ -279,6 +301,10 @@ how the thing works, as the chats established it
 - `rg`, `diff`/`patch`, `docker`, `curl`/`wget`, `strace`/`time` were already allowed and are now exercised through `run`/`debug`.
   <sub>2026-10-03 · strata-chat-2026-10-03-19-51.md</sub>
 
+**data/history/**
+- What the permission fix let me do `data/history/` is now `ai-user0:dev-sandbox` and writable.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-17-31.md</sub>
+
 **docs__read_file**
 - Logs land in `/home/user0/.terminal/jobs/<name>`, which is under the docs root, so `docs__read_file` can read a server's log.
   <sub>2026-10-03 · strata-chat-2026-10-03-15-05.md</sub>
@@ -306,6 +332,10 @@ how the thing works, as the chats established it
 **hypercore_engine_init**
 - `src/interface/hypercore_bridge.cpp` — `load_config_text()`, `is_blank()`, `trimmed()`, `looks_like_json_object()`, placed next to the existing JSON helpers; `hypercore_engine_init` resolves the source before allocating the engine, so a bad path unwinds nothing.
   <sub>2026-10-09 · strata-chat-2026-10-09-22-41.md</sub>
+
+**include/**
+- There is no gcov or clang-tidy coverage build in the repo, so there is no line number for `src/` and `include/`.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-00-06.md</sub>
 
 **integrating tools daytona_bridge_test**
 - Integrating the tools/daytona_bridge_test.py verification pass as a blocking stage in your CI pipeline ensures that the hidden visibility boundaries (STRATA_API/HYPERCORE_API), calling conventions, and cross-language compatibility guarantees are proven on a clean, isolated, foreign toolchain before code can be merged.
@@ -371,13 +401,17 @@ how the thing works, as the chats established it
 - The Docker version is untouched. If you'd rather keep the container running, the alternative is a `url:` entry — `url: http://web-scrape-mcp:8766/mcp` — which `serve/mcp.py` already supports.
   <sub>2026-10-03 · strata-chat-2026-10-03-14-03.md</sub>
 
+**serve/server.py**
+- Why you still see it. The fix is uncommitted and the process serving port 8081 (pid 1826973) started at 17:04, while `serve/server.py` was last written at 17:49.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-00-06.md</sub>
+
 **serve/test_assist.py**
 - `serve/test_assist.py`, `serve/test_monitor.py`, `serve/test_frontend.py`: 44 passed (18 subtests), including four new `SharedPaths` tests covering the "file owned by the other account" case, the chmod-to-666 convergence, and "Check lag writes to the file the dropdown reads".
   <sub>2026-10-09 · strata-chat-2026-10-09-15-05.md</sub>
 
 **sntrup761x25519**
 - I confirmed it non-interactively: Everything else is healthy. Key exchange succeeded (`sntrup761x25519` / chacha20), and `Host '192.168.74.9' is known and matches the ED25519 host key` — so the transport is fine, only the identity isn't authorized.
-  <sub>2026-10-07 · strata-chat-2026-10-07-17-37.md</sub>
+  <sub>2026-10-07 · strata-chat-2026-10-07-17-37.md · also in 2026-10-07-strata-chat-2026-10-07-17-37.md</sub>
 
 **sshpass**
 - Two side notes: `sshpass` isn't installed here, so I can't answer an interactive password prompt from the terminal tool — key auth is the clean path for me.
@@ -438,9 +472,17 @@ what was chosen, and why, oldest first
 - Two env additions the running server needs regardless: I already added `TERMINAL_ALLOW_EXTRA` and `RUFF_CACHE_DIR` to `mcp.yaml`, but pid 2351071 was started with the old environment, so `terminal__run` still rejects `sudo` ("'sudo' is not on the allowlist") — as you saw in my test above.
   <sub>2026-10-03 · strata-chat-2026-10-03-18-25.md</sub>
 
+**--check**
+- Outputs: `hypercore_max_tuning_matrix.log` (fixed-width table), `results/matrix-<date>.csv`, one log per run, and on a measured winner `max_config_<model>.sh` (env vars plus a `HC_ARGS` array) and `max_run_<model>.sh` (daemon wrapper with `--check`, `--status`, `--stop`, launching at `--max-context 262144`).
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-11-07.md</sub>
+
 **--port**
 - Three bugs it caught and I fixed: `status` printed nothing because `describe()` read `$pid/cmdline` instead of `/proc/$pid/cmdline`; a transient `/proc` entry vanished mid-scan and killed the script under `set -e`; and `--port` parsing used `shift` inside a `for` loop.
   <sub>2026-10-05 · strata-chat-2026-10-05-23-07.md</sub>
+
+**-rwx--r--**
+- `diff` of the new README against the previous commit: only the two added lines, nothing else changed (131 vs 129 lines) One note: `README.md` was owned by `user0` with mode `-rwx--r--`, so it was not writable by `ai-user0`.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-03-22.md</sub>
 
 **.new**
 - Install path is unchanged and still safe: write to `.new`, validate with `visudo -cf`, then `mv` + `chown root:root` + `chmod 440`; on failure it removes the temp file and dies without touching the live file.
@@ -460,7 +502,7 @@ what was chosen, and why, oldest first
 
 **/home/ai-user0/_notes/ai_setup.revised.sh**
 - Done — section 5 of `/home/ai-user0/_Notes/ai_setup.revised.sh` (lines 150–222) now emits the audited sudoers configuration from `/home/ai-user0/downloads/sudoers.ai-user0.fixed`. What changed:
-  <sub>2026-10-05 · strata-chat-2026-10-05-23-31.md</sub>
+  <sub>2026-10-05 · strata-chat-2026-10-05-23-31.md · also in 2026-10-05-strata-chat-2026-10-05-23-31.md</sub>
 
 **/home/user0/strata/mcp.yaml**
 - `sudo` is not on the terminal allowlist. I added `TERMINAL_ALLOW_EXTRA: sudo,setfacl,getfacl,visudo,apt-get,nproc` to the `terminal` server env in `/home/user0/Strata/mcp.yaml`, but the running `terminal_mcp.py` process (pid 2351071) was started with the old environment, so it still rejects `sudo`.
@@ -506,6 +548,10 @@ what was chosen, and why, oldest first
 - Socket sanitation: supervisor evicts stale socket, pid-private paths, cleanup, tests added to install.sh.
   <sub>2026-10-10 · hypercore-chat-2026-10-10-18-54.md</sub>
 
+**update setup script**
+- update the setup script /home/ai-user0/_Notes/ai_setup.revised.sh with the visudo configuration detailed in /home/ai-user0/downloads/sudoers.ai-user0.fixed
+  <sub>2026-10-05 · 2026-10-05-strata-chat-2026-10-05-23-31.md</sub>
+
 **verified bugs fixed**
 - Verified: Two bugs I fixed in your version: `self._session_counter += 1` inside worker threads is load/add/store, so two threads can land on the same id and overwrite each other's event — now behind a lock, with `_next_session_id()` as the single source.
   <sub>2026-10-09 · strata-chat-2026-10-09-18-55.md</sub>
@@ -523,9 +569,17 @@ numbers actually measured, not estimated
 - The gap between intent (93% of IT leaders plan to deploy agents within two years) and operational reality is the defining story of 2026, not the capability curve.
   <sub>2026-10-03 · strata-chat-2026-10-03-12-03.md</sub>
 
+**build-shared/hypercore-worker**
+- Also, `--short --dry-run` no longer runs a real calibration; it says so and falls back to the staged sweep: The next blocker you will hit `nvidia-smi` reports 28 MiB free right now: `serve/server.py` (pid 1646195) is running with `build-shared/hypercore-worker` holding the card.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-13-18.md</sub>
+
 **coulomb pseudopotential conventionally**
 - `μ` — the Coulomb pseudopotential — is not. It is conventionally fixed to 0.10 (McMillan) or computed by constrained RPA, which is expensive and has ~30–50% uncertainty.
   <sub>2026-10-07 · strata-chat-2026-10-07-18-16.md</sub>
+
+**nvidia-smi**
+- `nvidia-smi` reports 834 MiB free on the RTX 4090, and pid 2247278 (`/home/ai-user0/black_box/serve/server.py --engine hypercore --config /home/ai-user0/black_box/max_run_q2_0.json --port 8081`) has been up 55 minutes and is still serving requests.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-03-22.md</sub>
 
 **since subset includes**
 - Since 0.1.27 the subset includes every Chinese, Japanese and Korean token (106,299 ids), so answers in those languages are 15-38% faster (Q2_0, RTX 5070).
@@ -595,6 +649,10 @@ things that bit once and will bite again
 **mcp.yaml**
 - Known gaps — the guard is not a shell parser, gdb needs `-g` for useful output, `ptrace_scope` limits breakpoints, Docker volumes intentionally still reference user0, and `mcp.yaml` requires a restart.
   <sub>2026-10-03 · strata-chat-2026-10-03-19-51.md</sub>
+
+**restart.sh**
+- `watchdog_state()`'s own docstring says "The server logs this; it never acts on it", and the only restart entry points are `handler.restart()` (`serve/server.py:1346`) and `restart.sh`.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-22-55.md</sub>
 
 **sudo**
 - `sudo` is now allowed but still needs a password. `sudo -n apt-get update` returns "interactive authentication is required" — because the server process runs as user0, not ai-agent, so ai-agent's NOPASSWD rules don't apply.

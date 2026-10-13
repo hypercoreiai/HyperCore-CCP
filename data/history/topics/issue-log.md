@@ -1,6 +1,6 @@
 # Issues, root causes and fixes
 
-Accumulated from 25 transcripts, 36 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 30 transcripts, 42 entries. Built 2026-10-13. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state
@@ -41,6 +41,10 @@ restarts.
 how the thing works, as the chats established it
 
 
+**/api-monitor**
+- Root cause (`serve/server.py:3629`, the `/` and `/api-monitor` handlers): Replacing `<title>` with the script deletes the opening tag, so the served head becomes: Confirmed against the live server: The browser parses `HyperCore` as a stray text node in `<head>`, which is why it shows up in the top-left corner and pushes the banner down.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-00-06.md</sub>
+
 **/metrics**
 - Live proof: `/metrics` shows a 146,161-token prompt with `prompt_ms 36888.0` finishing `finish: "stop"`, and `grep -c "no frame for" hypercore-q2_0.log` is 0.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-13-20.md</sub>
@@ -53,6 +57,10 @@ how the thing works, as the chats established it
 - Two caveats worth knowing: denials come back as error text, so the hub still marks the call `ok=True` — the reason is in the payload; and `_created` is per-process, so after the restart nothing counts as session-owned until a tool writes it.
   <sub>2026-10-05 · strata-chat-2026-10-05-23-07.md</sub>
 
+**build/testing/temporary/lasttest.log**
+- Test 49 `ple_parity` still SEGFAULTs when the card is free (1.31 s, empty output in `build/Testing/Temporary/LastTest.log`; stdout is block-buffered so the crash point is not visible).
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-22-55.md</sub>
+
 **cfunctype**
 - The callback is rebound each iteration. The previous `CFUNCTYPE` object is freed while the request thread still holds the raw pointer: The segfault is in `destroy()`, not in the engine.
   <sub>2026-10-09 · strata-chat-2026-10-09-18-55.md</sub>
@@ -64,6 +72,10 @@ how the thing works, as the chats established it
 **doc_to_target**
 - I re-ran it through `score_agent.py` and it reproduced — after fixing a real bug: for `multiple_choice` tasks `doc_to_target` returns a choice index, not the answer string, so the original string-comparison scored all 60 MC items as misses.
   <sub>2026-10-07 · strata-chat-2026-10-07-17-37.md</sub>
+
+**docs/details.md**
+- `docs/DETAILS.md` says of this exact path: "the PCIe share of the missed experts (computed on the GPU instead of the CPU) still made the first answer after a start differ from the next ones." And issue #31 is a documented bug in precisely this expert-copy path for the IQ packs ("the experts are now copied by a GPU kernel, `--pcie-mode dma` restores the old way").
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
 
 **example debugging input**
 - Example of debugging an input gray image (raw, not preprocessed): Now both the LLaMA part and the image encoder is in … [universal] /home/ai-user0/Strata/third_party/llama.cpp/docs/multimodal/llava.md … the LLaVA model to LLaMA and multimodel projector constituents: 4.
@@ -115,7 +127,7 @@ how the thing works, as the chats established it
 
 **trace.py**
 - I instrumented the identical code path with a stall in the unlocked window so the schedule is reproducible rather than luck-dependent (`trace.py`, actual output): What the pointer state is doing. Three inserts against a cache of three slots produced three evictions when only two were needed.
-  <sub>2026-10-07 · strata-chat-2026-10-07-14-36.md</sub>
+  <sub>2026-10-07 · strata-chat-2026-10-07-14-36.md · also in 2026-10-07-strata-chat-2026-10-07-14-36.md</sub>
 
 **verdict initio prediction**
 - Verdict: a ±10 K ab-initio Tc prediction for an unsynthesized compound is not currently achievable, and the reason is specific and well-understood. The pipeline. DFPT phonons → Eliashberg/Allen–Dynes: `ω_log` and `λ` are genuinely computable from first principles.
@@ -140,6 +152,10 @@ what was chosen, and why, oldest first
 - Fixed with a `_callee_name()` helper, plus a self-test that feeds the guard a deliberately leaking function so it cannot degrade into a no-op again.
   <sub>2026-10-06 · strata-chat-2026-10-06-23-05.md</sub>
 
+**--full**
+- Two bugs fixed on the way: `main()` initialised the product counter to 0 so `--full` reported "configurations: 0", and the script aborted on the root-owned `tune/hypercore_max_tuning_matrix.log` (preflight now checks writability and falls back to `tune/results/`).
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-13-18.md</sub>
+
 **--port**
 - Three bugs it caught and I fixed: `status` printed nothing because `describe()` read `$pid/cmdline` instead of `/proc/$pid/cmdline`; a transient `/proc` entry vanished mid-scan and killed the script under `set -e`; and `--port` parsing used `shift` inside a `for` loop.
   <sub>2026-10-05 · strata-chat-2026-10-05-23-07.md</sub>
@@ -152,6 +168,10 @@ what was chosen, and why, oldest first
 - The two bugs I flagged earlier are fixed in the installed file: the visudo grant now names `/usr/sbin/visudo` (the real path), and docker is granted — `sudo -n /usr/bin/docker ps` returns an empty container table, exit 0.
   <sub>2026-10-05 · strata-chat-2026-10-05-20-19.md</sub>
 
+**args**
+- Reproduced directly: Fixed. Moved it out of `args` into the top level: Verified: `jq -e` parses, and `./engine/hypercore $(jq -r '.args[]' …)` now gets all the way through argument parsing to `--tokens is required` — the expected stop for generate-mode.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
+
 **bench/results/2026-10-09-blackbox-api/worker_mode_test.c**
 - Two bugs fixed in `bench/results/2026-10-09-blackbox-api/worker_mode_test.c`: 1.
   <sub>2026-10-10 · hypercore-chat-2026-10-10-11-52.md</sub>
@@ -163,6 +183,10 @@ what was chosen, and why, oldest first
 **download_auth**
 - Verified it still works for real: Two bugs the tests exposed, fixed along the way The `download_auth` tests failed for a different reason than the other nine — they were testing functions that didn't exist (`download_refusal`, `download_headers`, `hf_access_token`).
   <sub>2026-10-10 · strata-chat-2026-10-10-08-05.md</sub>
+
+**floatdistribution**
+- Two bugs found and fixed on the way: `(0, 0)` is a truthy tuple, so `display or any_link` returned the empty one; and Optuna 5.0.0 has no `UniformIntDistribution`, so `distributions_for()` now picks `IntDistribution`/`FloatDistribution` with fallbacks to the older names.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-17-13.md</sub>
 
 **leak_demo.cpp**
 - One subtle bug fixed: the command guard's name pattern didn't accept `+`, so `g++` was read as an argument and `leak_demo.cpp` was treated as the program.

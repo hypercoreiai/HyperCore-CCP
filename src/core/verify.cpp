@@ -1492,21 +1492,21 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
     return true;
 }
 
-// HYPERCORE_MMVQ_IL=0 keeps native_mmvq's multi-column kernels (the A/B arm of the interleaved matvec).
+// HYPERCORE_MMVQ_IL=1 uses the interleaved matvec; off by default (the A/B arm of the interleaved matvec).
 bool Verifier::mmvq_il_on() {
     static const bool on = [] {
         const char* v = std::getenv("HYPERCORE_MMVQ_IL");
-        return v == nullptr || v[0] != '0';
+        return v != nullptr && v[0] == '1';
     }();
     return on;
 }
 
-// #879: HYPERCORE_NAN_GUARD=0 turns the guard off.  No kernel is recorded then; the graphs are captured once, so
-// the variable is read once.
+// #879: HYPERCORE_NAN_GUARD=1 turns the guard on; off by default. No kernel is recorded then; the graphs are
+// captured once, so the variable is read once.
 bool Verifier::nan_guard_on() {
     static const bool on = [] {
         const char* v = std::getenv("HYPERCORE_NAN_GUARD");
-        return v == nullptr || std::atoi(v) != 0;
+        return v != nullptr && std::atoi(v) != 0;
     }();
     return on;
 }

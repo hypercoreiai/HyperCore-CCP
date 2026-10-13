@@ -1,6 +1,6 @@
 # MCP servers and tools
 
-Accumulated from 37 transcripts, 186 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 41 transcripts, 192 entries. Built 2026-10-13. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state
@@ -40,7 +40,9 @@ reported by `status()`, and a contracts test asserts the shipped config produces
 how the thing works, as the chats established it
 
 
-**mcp.yaml** · 15 chats
+**mcp.yaml** · 16 chats
+- A live server is running (pid 2461611, started 1 h 50 m ago) and `mcp.yaml` is read once at startup, so it still uses 100 until restarted.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-09-01.md</sub>
 - The remaining 21 are pre-existing drift in untracked files (`test_hub.py` expects six MCP servers while `mcp.yaml` registers seven; `terminal_mcp.py`'s allowlist returns ok for a non-allowlisted binary).
   <sub>2026-10-09 · strata-chat-2026-10-09-18-55.md</sub>
 - It isn't registered in `mcp.yaml` (that file has web, home, docs, scrape, terminal, and now browser), which is probably why I didn't reach for it.
@@ -180,7 +182,7 @@ how the thing works, as the chats established it
 - Also made truncation explicit where it was silent: `docs__read_file` no longer refuses large files outright, and `home__read` (the invisible truncation you hit) now appends "showing 8000 of 12345 characters read; use run with head, tail or sed for a specific range".
   <sub>2026-10-03 · strata-chat-2026-10-03-19-51.md</sub>
 - Overlapping tool families. `home__read` handles pdf/docx/config; `docs__read_file` is text-only.
-  <sub>2026-10-03 · strata-chat-2026-10-03-15-05.md</sub>
+  <sub>2026-10-03 · strata-chat-2026-10-03-15-05.md · also in 2026-10-03-strata-chat-2026-10-03-15-05.md</sub>
 
 **enabled** · 2 chats
 - Every failure is in `serve/mcp/tests` (`StubServer` has no attribute `enabled`; the terminal allowlist assertion) and `serve/mcp/web-scrape-mcp/tests` (`OSError` on the download folder).
@@ -193,6 +195,18 @@ how the thing works, as the chats established it
   <sub>2026-10-07 · strata-chat-2026-10-07-07-26.md</sub>
 - Camoufox (`pip install camoufox`) and stock Playwright Firefox are the other two paths the adapter will pick up automatically.
   <sub>2026-10-07 · strata-chat-2026-10-07-07-26.md</sub>
+
+**max_rounds** · 2 chats
+- The project's hard tool-call cap is the MCP hub's `max_rounds` (enforced in `serve/server.py:3035`, `if run_them and rounds >= max_rounds: yield "mcp", {"event": "limit", ...}`).
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-09-01.md</sub>
+- Keep `max_rounds` at 8 or lower — raising it makes the prompt grow further; the fix is fewer/smaller results, not more rounds.
+  <sub>2026-10-04 · strata-chat-2026-10-04-03-57.md</sub>
+
+**serve/docs_mcp.py** · 2 chats
+- Pre-existing lint and mypy findings in `serve/mcp/web_scrape_mcp.py` and `serve/docs_mcp.py` are known and not blocking; no test failure is caused by them.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-21-39.md</sub>
+- Note: `serve/rag.py`, `serve/terminal_mcp.py`, `serve/docs_mcp.py` and `serve/tool_permissions.py` are currently untracked in git (`??` in `git status`), so these edits won't show up in a diff against HEAD.
+  <sub>2026-10-06 · strata-chat-2026-10-06-14-10.md</sub>
 
 **serve/mcp/tests/test_contracts.py** · 2 chats
 - `serve/mcp/tests/test_contracts.py` still fails on a missing `Stub.enabled` — untracked directory, untouched by this work.
@@ -380,6 +394,14 @@ how the thing works, as the chats established it
 - `terminal__query`'s `limit` argument does nothing `serve/terminal_mcp.py:1244` computes `count` only to put `"add LIMIT {count}"` in a note; the SQL is passed to `sqlite3` unmodified.
   <sub>2026-10-06 · strata-chat-2026-10-06-14-10.md</sub>
 
+**cwd**
+- `terminal__status` reports `"root": "/home"` — every `cwd` I pass to the terminal tools must stay inside it, and the docs tools (`docs__`, `home__`) are scoped to it too.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
+
+**defaults**
+- Also left alone are test fixtures that pass explicit values to exercise the mechanism rather than define the limit (`serve/test_mcp.py`, `serve/mcp/tests/test_hub.py`, `tools/test_setup_config.py`); `test_hub.py:73` compares against `DEFAULTS`, so it tracks the new value automatically.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-09-01.md</sub>
+
 **doc_text.read_with_ranges**
 - `home__read` silently truncates at 80,000 characters and reports a wrong file length `serve/rag.py:413` reads only `doc_text.MAX_RANGE_CHARS 4` (80,000 chars) before line-range slicing, so `total` in `doc_text.read_with_ranges` is the window's line count, not the file's.
   <sub>2026-10-06 · strata-chat-2026-10-06-14-10.md</sub>
@@ -426,7 +448,7 @@ how the thing works, as the chats established it
 
 **hypercore_rag_root**
 - Environment-variable names are split. `serve/rag.py:23` reads `HYPERCORE_RAG_ROOT`, but `serve/mcp/tests/test_home.py` and `test_contracts.py` still set `STRATA_RAG_ROOT`.
-  <sub>2026-10-10 · strata-chat-2026-10-10-03-30.md</sub>
+  <sub>2026-10-10 · strata-chat-2026-10-10-03-30.md · also in 2026-10-10-strata-chat-2026-10-10-03-30.md</sub>
 
 **inputschema**
 - `test_contracts.py` — the fast pass a retest needs before the deep ones: every server in `mcp.yaml` starts, advertises exactly its documented 35 tools, every `inputSchema` is a well-formed object with typed arguments, unknown tools and bad arguments are answered as text rather than crashing the connection, and a server keeps answering after a bad call.
@@ -450,10 +472,6 @@ how the thing works, as the chats established it
 
 **max_context**
 - Restart after editing `mcp.yaml`; `GET /mcp` reports the live `max_rounds`/`max_result_chars` and `GET /props` reports `max_context`, so you can confirm what the server is actually using.
-  <sub>2026-10-04 · strata-chat-2026-10-04-03-57.md</sub>
-
-**max_rounds**
-- Keep `max_rounds` at 8 or lower — raising it makes the prompt grow further; the fix is fewer/smaller results, not more rounds.
   <sub>2026-10-04 · strata-chat-2026-10-04-03-57.md</sub>
 
 **mcp.max_rounds**
@@ -503,10 +521,6 @@ how the thing works, as the chats established it
 **serve/**
 - Fixing that means editing `serve/mcp/__init__.py`, and `serve/` is `root:root 644` (`stat -c '%a %U:%G' serve/mcp/__init__.py` → `644 root:root`), while the sudoers rules here allow only `sudo apt-get install -y nodejs npm git ripgrep jq`.
   <sub>2026-10-05 · strata-chat-2026-10-05-20-19.md</sub>
-
-**serve/docs_mcp.py**
-- Note: `serve/rag.py`, `serve/terminal_mcp.py`, `serve/docs_mcp.py` and `serve/tool_permissions.py` are currently untracked in git (`??` in `git status`), so these edits won't show up in a diff against HEAD.
-  <sub>2026-10-06 · strata-chat-2026-10-06-14-10.md</sub>
 
 **serve/mcp/assist_mcp.py**
 - Done and observable: `record_call()` (assist.py:340) appends JSONL, prints `[strata] assist …` to stderr (stdout is the MCP protocol), and both the HTTP server and `serve/mcp/assist_mcp.py` go through it.
@@ -604,6 +618,10 @@ what was chosen, and why, oldest first
 **_check_server**
 - `serve/mcp/__init__.py` (838 → 862 lines, matching the 24 added lines): `_check_server` now returns `_expand_paths(cfg)`.
   <sub>2026-10-05 · strata-chat-2026-10-05-20-19.md</sub>
+
+**args**
+- Only `args` is replaced; `sampling`, `reasoning_close_retry`, `mcp_servers` etc.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-17-13.md</sub>
 
 **batch_download**
 - Their names and descriptions match `web_scrape_mcp.py` exactly — `extract_media`, `download_file`, `download_page_media`, `batch_download`, `file_info`, `list_downloads`, plus `status` — which suggests the server I added to `mcp.yaml` is now being served to me.

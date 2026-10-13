@@ -70,6 +70,21 @@ context.
 The monitor plugged into the graphics card and other GPU programs take VRAM from the expert cache; RAM running below
 its rated speed (enable EXPO/XMP in the BIOS) slows the CPU half.
 
+**Answers come out in fragments, or a reply stops mid-sentence (0.1.42).**
+Three features added in 0.1.42 put extra work into every decode window. All three are off by default; each is turned on
+only by naming it:
+
+- `HYPERCORE_MMVQ_IL=1`: the interleaved copy of the q8_1 activations for the 2-4 column dense projections
+  ([MMVQ_IL_TABLE.md](MMVQ_IL_TABLE.md)).
+- `HYPERCORE_NAN_GUARD=1` (#879): every window graph checks its own head logits for a NaN or an infinity beside the
+  greedy pick. A window that meets one emits no tokens, the request ends with `DONE ... nonfinite`, its state is
+  dropped and the next request reads the prompt from token 0, which is what a truncated answer looks like.
+- `HYPERCORE_ADAPT_OVERLAP=1`: the adaptive tier's copies land beside the window already in flight, holding a layer's
+  plan back until that layer's bytes arrive.
+
+If the fragments follow the flags, the engine is the cause. If they appear with all three off, the model is being asked
+something the page injects rather than what you typed, and the fix is in the web app, not the engine.
+
 **An earlier reply that came back empty is gone from the chat history (0.1.40, #843).**
 The server leaves out finished assistant turns that have no text, so the next reply does not copy the empty ones.
 `HYPERCORE_KEEP_EMPTY_TURNS=1` in the server's environment renders them as before.

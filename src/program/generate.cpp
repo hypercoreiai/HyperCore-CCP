@@ -1272,16 +1272,12 @@ int adapt_lag() {
 /// HYPERCORE_ADAPT_OVERLAP=1: the adaptive tier's copies land while the next decode window already runs.  The window
 /// sees the swapped-in experts as resident from its first layer, exactly as after the plain wait (so the tokens are
 /// the same ones); only when the bytes arrive changes.  The copies go in layer order and the verify window holds a
-/// layer's plan back until that layer's copies have landed (AdaptGate in hypercore/core/verify.hpp).  On for CUDA;
-/// =0 turns it off.
+/// layer's plan back until that layer's copies have landed (AdaptGate in hypercore/core/verify.hpp).  Off by default
+/// on both CUDA and HIP; =1 turns it on.
 bool adapt_overlap() {
     static const bool v = [] {
         const char* e = std::getenv("HYPERCORE_ADAPT_OVERLAP");
-#if defined(HYPERCORE_USE_HIP)
-        return e && e[0] == '1';      // HIP: not measured here, opt-in
-#else
-        return !(e && e[0] == '0');   // CUDA: on by default
-#endif
+        return e && e[0] == '1';      // opt-in everywhere
     }();
     return v;
 }
@@ -6987,7 +6983,7 @@ int main(int argc, char** argv) {
             }
             aov = why == nullptr;
             if (aov)
-                std::fprintf(stderr, "hypercore serve: adaptive overlap (HYPERCORE_ADAPT_OVERLAP=0 turns it off): the adaptive tier's copies land while the next window runs "
+                std::fprintf(stderr, "hypercore serve: adaptive overlap on (HYPERCORE_ADAPT_OVERLAP=1): the adaptive tier's copies land while the next window runs "
                                      "(same tokens, a layer waits for its own copies)\n");
             else if (std::getenv("HYPERCORE_ADAPT_OVERLAP") != nullptr)   // quiet when it was only the default
                 std::fprintf(stderr, "hypercore serve: HYPERCORE_ADAPT_OVERLAP=1 is off: %s\n", why);

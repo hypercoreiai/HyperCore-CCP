@@ -1,6 +1,6 @@
 # Testing and code quality
 
-Accumulated from 38 transcripts, 93 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 47 transcripts, 104 entries. Built 2026-10-13. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state
@@ -70,6 +70,12 @@ how the thing works, as the chats established it
 - `serve/server.py` is untouched — 5,324 lines, and `test_server.py`, `test_lifecycle.py`, `test_detok.py`, `test_structured.py` still import `HyperCoreEngine`.
   <sub>2026-10-09 · strata-chat-2026-10-09-22-41.md</sub>
 
+**pytest tmpdir system** · 2 chats
+- `pytest test_bayesian_tune.py` → 47 passed in 83.4s (two new tests: one asserts the key and flag are absent when the server lacks them, one asserts they are kept when a server defines them)
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-03-22.md</sub>
+- Run pytest with `TMPDIR=$PWD/.tmp` — the system tmpdir on this box is owned by another user.
+  <sub>2026-10-07 · strata-chat-2026-10-07-20-11.md · also in strata-chat-2026-10-07-20-11.md</sub>
+
 **python3** · 2 chats
 - CI runs `python3 -m unittest tools.test_glibc_floor` from the root; the rest of the suite is unreachable from the documented invocation.
   <sub>2026-10-10 · strata-chat-2026-10-10-03-30.md</sub>
@@ -100,6 +106,12 @@ how the thing works, as the chats established it
 - One failure in `serve/test_prompts.py` is pre-existing — it fails at HEAD too, and none of the files I touched are involved.
   <sub>2026-10-06 · strata-chat-2026-10-06-00-55.md</sub>
 
+**suite runs fixture** · 2 chats
+- The fixture transcript must have the format the parser expects: `## You` / `## Assistant` sections.
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-17-31.md</sub>
+- The C suite runs on the fixture/synthetic token path (`src/interface/hypercore_bridge.cpp:559`).
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-11-52.md</sub>
+
 **--turn-tail-check**
 - `tools/test_setup_config.py`: new `ServerDefaults` class (new install gets all three; `--host 127.0.0.1 --api-key s3cret --no-turn-tail-check` wins; an existing config keeps its own values; the run script carries `--turn-tail-check` and honours a config that turns it off).
   <sub>2026-10-11 · hypercore-chat-2026-10-11-13-20.md</sub>
@@ -111,6 +123,10 @@ how the thing works, as the chats established it
 **.review_pytest_all.txt**
 - `.review_pytest_all.txt` ends with 24 collection errors — that number is from the old tree, not this one.
   <sub>2026-10-10 · strata-chat-2026-10-10-07-17.md</sub>
+
+**.sh**
+- `pytest optuna_tune/test_bayesian_tune.py -q` → 13 passed in 31.9s (covers DONE/INFO parsing, the argument builder including the on/off switches, seed determinism, the latency objective picking the minimum row, staged layer labelling, dry run launching nothing, and that both deliverables are written and the `.sh` passes `bash -n`).
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-14-31.md</sub>
 
 **.so**
 - Note also: the current `.so` is still the fixture spine (`run_request` sleeps `40 + max_new/2` ms per request), so these are dispatch numbers, not engine numbers.
@@ -140,9 +156,13 @@ how the thing works, as the chats established it
 - Artifact `/home/ai-user0/lm-eval-bench/summarise_results.py` (runs, prints the table above; ruff flags only a shebang-not-executable and import-order nit).
   <sub>2026-10-07 · strata-chat-2026-10-07-17-37.md</sub>
 
+**/home/ai-user0/strata/hypercore-tune/.mcp_test_state.json**
+- Run this when you have a GitHub session: Everything else is done: the repository is built, 45 tests pass, ruff is clean, paths are absolute, and the state file at `/home/ai-user0/Strata/HyperCore-Tune/.mcp_test_state.json` records the two remaining items (the push, and a real GPU sweep once `optuna` is installed into the Strata venv).
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-03-22.md</sub>
+
 **/home/user0/.pyenv/versions/3.12.9/lib/python3.12/site-packages**
 - `terminal_check` can't see tools installed in the pyenv interpreters. It reported `ruff` missing even though ruff 0.16.10 is installed at `/home/user0/.pyenv/versions/3.12.9/lib/python3.12/site-packages` — it only probes binaries on PATH.
-  <sub>2026-10-03 · strata-chat-2026-10-03-18-25.md</sub>
+  <sub>2026-10-03 · strata-chat-2026-10-03-18-25.md · also in 2026-10-03-strata-chat-2026-10-03-18-25.md</sub>
 
 **/opt/ai-workspace/.tmp/pytest-of-ai-user0**
 - The 16 errors are an environment artifact — pytest's temp root `/opt/ai-workspace/.tmp/pytest-of-ai-user0` is owned by `ai-agent` and I can't remove it; with `TMPDIR=/tmp` those 18 web-scrape tests pass.
@@ -184,6 +204,10 @@ how the thing works, as the chats established it
 - `tools/test_backend_parity.py` is fixture-level, and there are no `pack/full` weights in the workspace — only `data/experimental-speed-projection/Qwen3.8-Flash-Next-experimental-speed-projection.gguf`.
   <sub>2026-10-10 · hypercore-chat-2026-10-10-11-52.md</sub>
 
+**defaults**
+- Also left alone are test fixtures that pass explicit values to exercise the mechanism rather than define the limit (`serve/test_mcp.py`, `serve/mcp/tests/test_hub.py`, `tools/test_setup_config.py`); `test_hub.py:73` compares against `DEFAULTS`, so it tracks the new value automatically.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-09-01.md</sub>
+
 **docs/mcp_server.md**
 - `docs/MCP_SERVER.md` presents it as a server for external assistants: To make it available in this chat, add it beside the others: Its tests are separate from the retest harness: `python -m unittest tools/test_strata_mcp.py` runs against a fake setup and server, so adding it to `mcp.yaml` wouldn't bring it into the 221-case `run_all.py` count.
   <sub>2026-10-07 · strata-chat-2026-10-07-09-31.md</sub>
@@ -212,6 +236,10 @@ how the thing works, as the chats established it
 - `iq_parity.cpp` checks dequantization against gguf-py on generated fixtures and states the error metric explicitly: "bitwise equality is not claimed and not required."
   <sub>2026-10-09 · strata-chat-2026-10-09-16-17.md</sub>
 
+**min_engine**
+- `tools/test_setup_strix_halo.py:383,392,399` fail for the same reason: the fixture zips carry `MIN_ENGINE`-era versions and the refusal message now reads "it is version 0.1.40; this setup needs 0.1.42".
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-22-55.md</sub>
+
 **moving tests fixtures**
 - Moving it to tests/fixtures/legacy_engine.py keeps the test suites passing without contaminating the clean production runtime.
   <sub>2026-10-09 · strata-chat-2026-10-09-22-41.md</sub>
@@ -232,10 +260,6 @@ how the thing works, as the chats established it
 - `serve/test_prompts.py`: the shipped-file test now uses `find_prompt_file(ROOT)`, and a new test covers the search order (root wins over `prompts/`, and neither → the "is not there" error).
   <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md</sub>
 
-**pytest tmpdir system**
-- Run pytest with `TMPDIR=$PWD/.tmp` — the system tmpdir on this box is owned by another user.
-  <sub>2026-10-07 · strata-chat-2026-10-07-20-11.md · also in strata-chat-2026-10-07-20-11.md</sub>
-
 **python**
 - Suggested fix: when a `python` argument is given, probe `<interpreter> -m ruff --version` / `-m mypy --version`, and otherwise scan `~/.pyenv/versions//bin`.
   <sub>2026-10-03 · strata-chat-2026-10-03-18-25.md</sub>
@@ -252,9 +276,17 @@ how the thing works, as the chats established it
 - The one thing I did not finish: a fresh full `serve/` + `tools/` pytest run — it was still running when I stopped it, so the pass/fail total above is the recorded figure plus my spot-check, not a new full-suite number.
   <sub>2026-10-10 · strata-chat-2026-10-10-07-17.md</sub>
 
+**serve/docs_mcp.py**
+- Pre-existing lint and mypy findings in `serve/mcp/web_scrape_mcp.py` and `serve/docs_mcp.py` are known and not blocking; no test failure is caused by them.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-21-39.md</sub>
+
 **serve/test_mcp.py**
 - If you want, I can patch `app.js:95` to call `loadMcp()` after the key is saved — a one-line change, covered by `serve/test_mcp.py`.
   <sub>2026-10-04 · strata-chat-2026-10-04-06-37.md</sub>
+
+**setup.py**
+- `mypy --ignore-missing-imports` on `hardware.py history.py bayesian_tune.py search_space.py engine_runner.py run_config.py` → no errors in those files (the 81 errors reported are all in `setup.py`, pre-existing).
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-17-13.md</sub>
 
 **shutil.which**
 - `~/.pyenv/shims` is already on the PATH of the MCP server process, so installing into a pyenv version and rehashing makes the tools visible to `shutil.which`: Verified now: `mypy → /home/user0/.pyenv/shims/mypy`, `pylint → /home/user0/.pyenv/shims/pylint`, `ruff → /home/user0/.pyenv/shims/ruff`.
@@ -264,13 +296,13 @@ how the thing works, as the chats established it
 - Parity/bench/test files are colocated with the kernels they check (`src/kernels/_parity.cpp`), plus a separate `tests/` tree: `tests/core` 12 files, `tests/hip` 16, `tests/cuda` 3, `tests/prefill` 1, `tests/platform` 1, `tests/data/native_experts` 6 fixtures.
   <sub>2026-10-09 · strata-chat-2026-10-09-08-03.md</sub>
 
+**src/kernels/ple_parity.cpp**
+- `src/kernels/ple_parity.cpp` now refuses a placeholder fixture instead of emitting seven unrelated failures: after the geometry check it prints `the capture carries a signal` and exits 1 with `BLOCK SKIPPED; the fixture has no signal`.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-07-50.md</sub>
+
 **strata.example.com**
 - `strata.example.com` is a test fixture domain.
   <sub>2026-10-10 · strata-chat-2026-10-10-07-17.md</sub>
-
-**suite runs fixture**
-- The C suite runs on the fixture/synthetic token path (`src/interface/hypercore_bridge.cpp:559`).
-  <sub>2026-10-10 · hypercore-chat-2026-10-10-11-52.md</sub>
 
 **system_prompt**
 - At the moment of the full run the file had only `system_prompt` and no profiles at all, which is why pytest showed `[]` against the expected three.
@@ -291,6 +323,10 @@ how the thing works, as the chats established it
 **tools/**
 - `tools/` suite: 551 passed, 4 skipped, 189 subtests, 0 failed (the golden baseline was re-recorded; the only diff across all 25 profiles is those three keys).
   <sub>2026-10-11 · hypercore-chat-2026-10-11-07-09.md</sub>
+
+**tools/test_best_model.py**
+- `tools/test_best_model.py` imports a module that does not exist in the repo, so pytest aborts collection on it.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-00-06.md · also in hypercore-chat-2026-10-13-00-06.md</sub>
 
 **valgrind cmake ripgrep**
 - `gdb valgrind cmake ripgrep sqlite3 ffmpeg mypy pylint python3-pytest shellcheck acl` via apt, and `ruff black vulture pyright` via pip (pyright fetches its own node, so it works despite no system node).
@@ -360,6 +396,10 @@ what was chosen, and why, oldest first
 **serve.test_abi_contract**
 - Verification: `serve.test_turn_tail`, `serve.test_monitor_fields`, `serve.test_runconfig`, `serve.test_web_client`, `serve.test_server`, `serve.test_stream_loop`, `serve.test_parallel`, `serve.test_fatal_recovery`, `serve.test_lifecycle`, `serve.test_engine_process`, `serve.test_abi_contract`, `serve.test_slots` — 322 tests, all green; ruff clean on the changed files.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-11-46.md</sub>
+
+**serve/test_stream_loop.py**
+- `serve/hypercore_supervisor.py:685` read that frame and threw the reason away: Test added at `serve/test_stream_loop.py` (`StreamReaderTest.test_a_dead_link_says_why_it_closed`, using the fixture's `die_after=2`): passes on its own, and the module runs 16 tests OK (`python3 -m unittest serve.test_stream_loop -v`, exit 0).
+  <sub>2026-10-11 · hypercore-chat-2026-10-11-22-55.md</sub>
 
 **serve/test_terminal_mcp.py**
 - `serve/test_terminal_mcp.py`: added `test_the_device_files_are_exempt_from_the_root` in the existing unittest style.

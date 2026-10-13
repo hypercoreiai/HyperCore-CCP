@@ -1,6 +1,6 @@
 # Engine internals
 
-Accumulated from 18 transcripts, 60 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 22 transcripts, 67 entries. Built 2026-10-13. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state
@@ -33,8 +33,16 @@ what the Monitor's "Reused" and draft columns show.
 
 **Prefill and decode are measured separately.** `prefill_ms` is the engine's own time to read the
 prompt; `decode_ms` is the emit window. The Monitor's prefill card is computed from those two and
-from `prompt_read` — the tokens actually read — not from the whole prompt, so a cached 88k-token
+from `prompt_read` - the tokens actually read - not from the whole prompt, so a cached 88k-token
 prefix does not make the rate look wrong.
+
+**Three 0.1.42 features are off by default.** `HYPERCORE_MMVQ_IL` (the interleaved small-batch matvec,
+`src/core/verify.cpp:Verifier::mmvq_il_on`), `HYPERCORE_NAN_GUARD` (the per-window head-logits check,
+`src/core/verify.cpp:Verifier::nan_guard_on`) and `HYPERCORE_ADAPT_OVERLAP` (the adaptive tier's overlapping
+copies, `src/program/generate.cpp:adapt_overlap`) each add work to every decode window. They were on by default in
+0.1.42; on 2026-10-13 all three were flipped to opt-in after an install that ran slow and produced broken thinking
+blocks. The A/B that proves the link has not been run yet: the card was fully held by the other server, so the
+rebuilt engine was never started on a free GPU.
 
 
 ## What is true now
@@ -53,6 +61,12 @@ how the thing works, as the chats established it
   <sub>2026-10-09 · strata-chat-2026-10-09-22-41.md</sub>
 - That costs a field, and byte 36 is now TTFT, so it means either a 44-byte summary (which the prefix rule already tolerates) or redefining `prefill_ms` to start at the scheduling point.
   <sub>2026-10-09 · strata-chat-2026-10-09-22-41.md</sub>
+
+**--batch-mtp** · 2 chats
+- The two paths `include/strata/program/batch_groups.hpp` is the whole decision, and it is pure (no GPU, no env): Why they conflict. With a layer split, `--batch-mtp`'s slot drafters live on the last stage's GPU, and the windows are two rows per slot pushed through every stage.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-03-22.md</sub>
+- The 0.1.43 behaviour your changelog describes, where `--batch-mtp` actually runs on a layer split, needs the slot-drafter support from Strata commit `48f2c47d` (`include/strata/core/batch_rows.hpp` plus the `verify.cpp` `stage_batch` layout rules) ported first.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-03-22.md</sub>
 
 **decode_ms** · 2 chats
 - After the split, the slot hold is `prefill_ms` and `decode_ms` is only the emit window.
@@ -76,9 +90,17 @@ how the thing works, as the chats established it
 - If you genuinely need a bigger window, re-run setup with a larger `--context`; 262,144 is the model's trained ceiling, so anything above it needs rope scaling, which setup derives for you (`START-HERE.bat --setup --context 393216` picks yarn and the factor).
   <sub>2026-10-04 · strata-chat-2026-10-04-03-57.md</sub>
 
+**--gen**
+- What is in place Usage `--gen` maximises generation tok/s, `--prefill` maximises prompt tok/s, `--latency` minimises `prompt_ms + decode_ms`; all three are mapped to one maximisation score so a failed boot lands at the bottom of the range.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-14-31.md</sub>
+
 **/health**
 - Live: `python3 -m serve.hypercore_server --port 8125 --worker build-shared/hypercore-worker --socket /tmp/hc3.sock --config '{"batch":2}'` → `/health` 200, a 20-token completion streams and logs `[MONITOR] … decode_ms=39 tokens=20 drafts=20/100`, `/slots` returns the populated monitor, a dropped client issues `CMD_CANCEL` and `in_flight` returns to 0.
   <sub>2026-10-09 · strata-chat-2026-10-09-22-41.md</sub>
+
+**/home/ai-user0/black_box/tune/**
+- `/home/ai-user0/black_box/tune/` holds `lib.sh` (the shared FIFO + DONE-parsing plumbing), three single-dimension sweeps (`tune_affinity.sh`, `tune_host_core.sh`, `tune_pool_workers.sh`), two production launchers, and `results/` with four CSVs and 20 engine logs.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-11-07.md</sub>
 
 **/metrics**
 - Also, while checking I noticed the config passes `--spec 4` but `/metrics` reports `"spec": 6`; the engine is apparently deriving the verify window from the MTP draft head rather than the flag.
@@ -184,6 +206,10 @@ how the thing works, as the chats established it
 - The silence wall is the supervisor's own (`"engine_silence_s"`, 300 s by default; `0` waits as long as the request needs), measured from the last frame, so a six-figure prompt that takes 31 s to read is not cut off mid-prefill.
   <sub>2026-10-11 · hypercore-chat-2026-10-11-08-01.md</sub>
 
+**spec spec speculative**
+- The `--spec 4` / `--spec-min-p 0.90` speculative decoding: the log shows "drafts accepted 0 of 0" on the degenerate turns and the MTP draft vocab includes all CJK tokens (106,299 ids) — the garbling into CJK characters ("该该该", "亚马逊pyramid", " scopes.otify") is exactly the kind of thing the draft layer proposes when the verified model's logits collapse.
+  <sub>2026-10-13 · strata-chat-2026-10-13-21-31.md</sub>
+
 **strata**
 - Upstream `third_party/llama.cpp/models/ggml-vocab-.gguf` — `strata` there is a vocabulary token inside llama.cpp's own model files, not our naming.
   <sub>2026-10-10 · strata-chat-2026-10-10-07-17.md</sub>
@@ -198,7 +224,7 @@ how the thing works, as the chats established it
 
 **tools/daytona_bridge_test.py**
 - Cross-toolchain stage: now green. `tools/daytona_bridge_test.py` ran end-to-end: 8/8 C tests (abi, busy, precedence, summary, pool, cancel, resolve, worker_mode) compiled and ran on a foreign glibc 2.41 host against the artifact built here.
-  <sub>2026-10-10 · hypercore-chat-2026-10-10-11-52.md</sub>
+  <sub>2026-10-10 · hypercore-chat-2026-10-10-11-52.md · also in 2026-10-10-hypercore-chat-2026-10-10-11-52.md</sub>
 
 **vision_start_reason**
 - `log.tell()` on a handle opened in append mode is 0 until it is written to, so `vision_start_reason` read the whole log and returned its last line — the engine's `hypercore serve: mtp: the draft head does not fit` from setup's tuning run.
@@ -212,6 +238,10 @@ how the thing works, as the chats established it
 
 what was chosen, and why, oldest first
 
+
+**--batch-mtp**
+- What was added Verified in this session One thing you should know before using it `black_box` at 0.1.42 still refuses `--batch-mtp` on any layer split (`generate.cpp:3601`, "it is for one GPU (no layer split or helper) for now").
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-03-22.md</sub>
 
 **decode_ms**
 - Decision 1 — the premise was already violated in code, so I fixed the code, not the doc. `include/hypercore/hypercore_api.h` claimed `decode_ms` "includes draft verification latency", but `src/interface/hypercore_bridge.cpp` measured it from the first token callback.
@@ -261,6 +291,10 @@ numbers actually measured, not estimated
 **also tuning failed**
 - This is also why `Tuning: FAILED` said "the draft head does not fit: needs 178 MiB of VRAM and 170 MiB is free" — the MTP head competes for the same held-back pool.
   <sub>2026-10-10 · strata-chat-2026-10-10-20-47.md</sub>
+
+**guard more experts**
+- The guard. If 90% or more of the experts are already in the GPU cache (60% on a HIP layer split), the default is not set and you get the opposite message: `STRATA_ROUTE_TAIL_SKIP is off by default: X% of the experts are in the GPU cache, so few are missed and skipping costs more draft acceptance than it saves`.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-03-22.md</sub>
 
 **verdict give defensible**
 - Verdict: I can give a defensible probabilistic forecast, but the honest headline is that the dominant uncertainty is observational, not mechanistic. Forecast under stated pathways. IPCC AR6 gives a likely decline of ~34% (10–43%) by 2100 under high emissions, and explicitly states low confidence in collapse.

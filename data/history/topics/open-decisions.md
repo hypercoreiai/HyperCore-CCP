@@ -1,6 +1,6 @@
 # Open decisions and deferred work
 
-Accumulated from 8 transcripts, 8 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 8 transcripts, 8 entries. Built 2026-10-13. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state

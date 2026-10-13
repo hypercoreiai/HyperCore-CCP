@@ -8,7 +8,7 @@ HyperCore runs a 30 B-class MoE model on a single 12–24 GB consumer GPU by kee
 hot path on the card and the cold path in system RAM, and serving it as an OpenAI- and
 Anthropic-compatible API on `http://127.0.0.1:8081`.
 
-Engine version **0.1.40** · CUDA, HIP (AMD), SYCL (Intel Arc) and CPU backends · MIT licensed.
+Engine version **0.1.42** · CUDA, HIP (AMD), SYCL (Intel Arc) and CPU backends · MIT licensed.
 
 ---
 

@@ -26,5 +26,13 @@ what the Monitor's "Reused" and draft columns show.
 
 **Prefill and decode are measured separately.** `prefill_ms` is the engine's own time to read the
 prompt; `decode_ms` is the emit window. The Monitor's prefill card is computed from those two and
-from `prompt_read` — the tokens actually read — not from the whole prompt, so a cached 88k-token
+from `prompt_read` - the tokens actually read - not from the whole prompt, so a cached 88k-token
 prefix does not make the rate look wrong.
+
+**Three 0.1.42 features are off by default.** `HYPERCORE_MMVQ_IL` (the interleaved small-batch matvec,
+`src/core/verify.cpp:Verifier::mmvq_il_on`), `HYPERCORE_NAN_GUARD` (the per-window head-logits check,
+`src/core/verify.cpp:Verifier::nan_guard_on`) and `HYPERCORE_ADAPT_OVERLAP` (the adaptive tier's overlapping
+copies, `src/program/generate.cpp:adapt_overlap`) each add work to every decode window. They were on by default in
+0.1.42; on 2026-10-13 all three were flipped to opt-in after an install that ran slow and produced broken thinking
+blocks. The A/B that proves the link has not been run yet: the card was fully held by the other server, so the
+rebuilt engine was never started on a free GPU.

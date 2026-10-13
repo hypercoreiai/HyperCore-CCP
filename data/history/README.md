@@ -10,18 +10,18 @@ What was learned across the chat transcripts, merged by topic instead of by chat
 - `sources.md` — the reverse index, category by transcript
 
 ## Categories
-- `topics/mcp-tooling.md` — MCP servers and tools (186 entries)
-- `topics/deployment-permissions.md` — Deployment, paths and permissions (147 entries)
-- `topics/testing-quality.md` — Testing and code quality (93 entries)
-- `topics/setup-configuration.md` — Setup, run configs and defaults (93 entries)
-- `topics/web-ui-monitor.md` — The web app and the Monitor (84 entries)
-- `topics/hardware-environment.md` — Hardware and environment (73 entries)
-- `topics/memory-vram.md` — Memory, VRAM and RAM (65 entries)
-- `topics/engine-internals.md` — Engine internals (60 entries)
-- `topics/issue-log.md` — Issues, root causes and fixes (36 entries)
-- `topics/performance-benchmarks.md` — Performance and benchmarks (24 entries)
-- `topics/prompting-behaviour.md` — Prompting, agents and turn behaviour (20 entries)
-- `topics/general-knowledge.md` — General knowledge outside the project (15 entries)
+- `topics/mcp-tooling.md` — MCP servers and tools (192 entries)
+- `topics/deployment-permissions.md` — Deployment, paths and permissions (163 entries)
+- `topics/setup-configuration.md` — Setup, run configs and defaults (120 entries)
+- `topics/testing-quality.md` — Testing and code quality (104 entries)
+- `topics/web-ui-monitor.md` — The web app and the Monitor (103 entries)
+- `topics/hardware-environment.md` — Hardware and environment (93 entries)
+- `topics/memory-vram.md` — Memory, VRAM and RAM (80 entries)
+- `topics/engine-internals.md` — Engine internals (67 entries)
+- `topics/issue-log.md` — Issues, root causes and fixes (42 entries)
+- `topics/performance-benchmarks.md` — Performance and benchmarks (28 entries)
+- `topics/prompting-behaviour.md` — Prompting, agents and turn behaviour (26 entries)
+- `topics/general-knowledge.md` — General knowledge outside the project (18 entries)
 - `topics/open-decisions.md` — Open decisions and deferred work (8 entries)
 
 ## Rebuild

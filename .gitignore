@@ -187,3 +187,8 @@ bench/results/verify-*.json
 
 # Local scratch for probes and patches.
 /scratch/
+
+# Run scripts the tuning sweep and the Strata-side helpers write next to run-<model>.sh:
+# they name this machine's model paths, the same class as ni_*.sh and max_run_*.sh.
+/ni*_run-*.sh
+/start/

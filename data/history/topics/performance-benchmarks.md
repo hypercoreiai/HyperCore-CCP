@@ -1,6 +1,6 @@
 # Performance and benchmarks
 
-Accumulated from 13 transcripts, 24 entries. Built 2026-10-11. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 15 transcripts, 28 entries. Built 2026-10-13. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state
@@ -47,6 +47,14 @@ how the thing works, as the chats established it
 - Because queue_hold_ms = ttft_ms - prefill_ms is a simple subtraction, computing it inside ipc_parser.py is straightforward.
   <sub>2026-10-09 · strata-chat-2026-10-09-22-41.md</sub>
 
+**--gen**
+- What is in place Usage `--gen` maximises generation tok/s, `--prefill` maximises prompt tok/s, `--latency` minimises `prompt_ms + decode_ms`; all three are mapped to one maximisation score so a failed boot lands at the bottom of the range.
+  <sub>2026-10-12 · hypercore-chat-2026-10-12-14-31.md</sub>
+
+**.mcp_test_state.json**
+- `.mcp_test_state.json` updated to loop 93, timestamped, checkpoint entry appended to `done`, `next_step` set to the three remaining hardware items (NATIVE_EXPERTS parity with Strata 1.43, loan/watchdog bounce side-stream, ple-io drop-cache-on-exit).
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-08-16.md</sub>
+
 **/home/ai-user0/lm-eval-runs/peer_qwen3_limit10.json**
 - To make it an apples-to-apples comparison I then re-ran `Qwen/Qwen3-0.6B` on the peer's 1060 with `--limit 10`, so both of us saw the identical 60 items (100.4 s eval, mirrored to `/home/ai-user0/lm-eval-runs/peer_qwen3_limit10.json`).
   <sub>2026-10-07 · strata-chat-2026-10-07-17-37.md</sub>
@@ -62,6 +70,10 @@ how the thing works, as the chats established it
 **both symptoms trace**
 - Both symptoms trace to the supervisor refactor, not to a missing feature. `grep -cE "calibrat"` → 24 in both `~/Strata/setup.py` and `~/black_box/setup.py`, and the offer block is identical apart from the name: The prompt is emitted after Step 4 (engine + image encoder).
   <sub>2026-10-10 · strata-chat-2026-10-10-20-47.md</sub>
+
+**done calibrate benchmark**
+- Done. The calibrate/benchmark option from Strata_1.43 is now in `~/black_box`, tested, and the state file is updated (loop 89).
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-08-16.md</sub>
 
 **memory hypergraph based**
 - Memory (hypergraph-based systems like HGMEM), long-context efficiency (TTT-E2E, which keeps latency constant at 128k tokens) and self-assessment are the current research frontier.
@@ -91,6 +103,10 @@ what was chosen, and why, oldest first
 **--builds**
 - `--builds` would delete `build-shared/hypercore-worker` and `build/libhypercore_api.so`, which `tools/bench_flood.py`, `tools/backend_parity.py`, `tools/native_probe.py` and the calibration I just fixed all read by default.
   <sub>2026-10-10 · strata-chat-2026-10-10-12-04.md</sub>
+
+**bench.sh**
+- The calibrate/benchmark work is in `setup.py`, not `setup.sh`, so the option had to be added to `black_box`'s `setup.py` and given a `bench.sh` entry point next to `setup.sh`.
+  <sub>2026-10-13 · hypercore-chat-2026-10-13-08-16.md</sub>
 
 ## Measured on this machine
 
