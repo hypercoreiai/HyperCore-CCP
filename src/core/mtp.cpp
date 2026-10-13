@@ -1,7 +1,9 @@
 // src/core/mtp.cpp - see include/hypercore/core/mtp.hpp.
 #include "hypercore/core/mtp.hpp"
 #include "hypercore/core/coupled_draft.hpp"
+#include "hypercore/core/mtp_side_stream.hpp"
 #include "hypercore/core/on_device.hpp"
+#include "hypercore/core/progress.hpp"
 
 #include "hypercore/core/native_head.hpp"
 #include "hypercore/core/peer_experts.hpp"
@@ -423,12 +425,30 @@ bool MtpDrafter::load(const std::string& rt_dir, const ModelGeometry& g, Session
     cudaGetLastError();
 #endif
     if (!prio && cudaStreamCreateWithFlags(&cs_, cudaStreamNonBlocking) != cudaSuccess) { err = "mtp: stream"; return false; }
+#if defined(HYPERCORE_USE_HIP)
+    // #2055: HIP keeps the shared expert on cs_, so nothing uses this branch stream, and #1240 stopped creating it and
+    // its two events (an R9700 lost prompt speed with them).  gfx103x is the exception: the stream's existence alone
+    // makes prompts read faster there (see include/hypercore/core/mtp_side_stream.hpp), and the events change nothing.
+    {
+        int dev = 0;
+        cudaDeviceProp prop{};
+        const bool on = mtp_side_stream_on(
+            cudaGetDevice(&dev) == cudaSuccess && cudaGetDeviceProperties(&prop, dev) == cudaSuccess
+                ? prop.gcnArchName : nullptr,
+            std::getenv("HYPERCORE_MTP_SIDE_STREAM"));
+        if (on && cudaStreamCreateWithFlags(&side_, cudaStreamNonBlocking) != cudaSuccess) {
+            err = "mtp: streams";
+            return false;
+        }
+    }
+#else
     if (cudaStreamCreateWithFlags(&side_, cudaStreamNonBlocking) != cudaSuccess ||
         cudaEventCreateWithFlags(&sh_fork_, cudaEventDisableTiming) != cudaSuccess ||
         cudaEventCreateWithFlags(&sh_join_, cudaEventDisableTiming) != cudaSuccess) {
         err = "mtp: streams";
         return false;
     }
+#endif
     const double files_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t_files).count();
     if (shared != nullptr) {
         std::fprintf(stderr, "hypercore mtp: shared draft weights, %.0f MiB of private state and buffers\n",
@@ -1163,7 +1183,7 @@ bool MtpDrafter::prefill(const float* R_rows, const int32_t* next_tokens, int64_
             stp[i * 4 + 3] = (int32_t) (cell + 1);
             for (int64_t h = 0; h < NHp; ++h) ps[i * NHp + h] = (int32_t) cell;
         }
-        if (cudaMemcpyAsync(pf_dev_, rec.data(), rec.size() * sizeof(int32_t), cudaMemcpyHostToDevice, cs_) != cudaSuccess) {
+        if (pf_ring_.h2d(pf_dev_, rec.data(), rec.size() * sizeof(int32_t), cs_) != cudaSuccess) {   // #1996
             err = "mtp prefill: the input records upload failed";
             return false;
         }
@@ -1283,6 +1303,7 @@ bool MtpDrafter::draft(int T, const int32_t* tokens, int64_t p, int a, int32_t* 
         }
         (void) cudaStreamQuery(cs_);
         prefetch_ple(tokens[a]);
+        progress_at("mtp draft: waiting for the GPU");   // #2065: a stall here read as "decode", the verify window before it
         for (int j = 0; j + 1 < max_steps; ++j) {
             uint32_t spins = 0;
             while (((volatile int32_t*) h_out_)[j] < 0) {
@@ -1311,6 +1332,7 @@ bool MtpDrafter::draft(int T, const int32_t* tokens, int64_t p, int a, int32_t* 
         }
         (void) cudaStreamQuery(cs_);
         prefetch_ple(tokens[a]);
+        progress_at("mtp draft: waiting for the GPU");   // #2065
         auto wait_step = [&](int j) {
             uint32_t spins = 0;
             while (((volatile int32_t*) h_out_)[j] < 0) {

@@ -27,4 +27,10 @@ inline bool gfx_arch_is_gfx11_wmma(const char* gcn) {
 /// Strix Halo (Ryzen AI Max, RDNA3.5): the part the gfx1151 defaults (docs/STRIX_HALO.md) are measured on.
 inline bool gfx_arch_is_gfx1151(const char* gcn) { return gfx_arch_is(gcn, "gfx1151"); }
 
+/// RDNA2 (gfx1030/1031/1032: RX 6800 / 6900).  #2055: the drafter's branch stream helps the prompt path on these
+/// parts and costs speed on the others, so the default is per-architecture, not per-backend.
+inline bool gfx_arch_is_gfx103(const char* gcn) {
+    return gfx_arch_is(gcn, "gfx1030") || gfx_arch_is(gcn, "gfx1031") || gfx_arch_is(gcn, "gfx1032");
+}
+
 }  // namespace hypercore::kernels

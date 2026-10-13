@@ -13,6 +13,7 @@
 #include "hypercore/kernels/cpu/expert_layout.hpp"
 #include "hypercore/kernels/bf16_gemv.hpp"
 #include "hypercore/kernels/native_router.hpp"
+#include "hypercore/kernels/route_residency.hpp"
 #include "hypercore/kernels/native_moe.hpp"
 #include "hypercore/kernels/cpu/expert.hpp"
 #include "hypercore/kernels/elementwise.hpp"
@@ -353,6 +354,18 @@ Verifier::~Verifier() {
     if (ev_done_) cudaEventDestroy(ev_done_);
     if (ev_commit_) cudaEventDestroy(ev_commit_);
     if (prof_pin_) cudaFreeHost(prof_pin_);
+    if (rr_stats_) {   // what HYPERCORE_ROUTE_RESIDENT did over this verifier's life, so the option can be judged
+        unsigned long long h[8] = {};
+        if (cudaDeviceSynchronize() == cudaSuccess &&
+            cudaMemcpy(h, rr_stats_, sizeof h, cudaMemcpyDeviceToHost) == cudaSuccess) {
+            std::fprintf(stderr, "route resident: margin=%g ranks=%d-%d prompt windows: tail=%llu swaps=%llu (%.1f%%) non-resident %llu -> %llu\n",
+                         rr_margin_, rr_lo_, rr_hi_, h[0], h[1], h[0] ? 100.0 * h[1] / h[0] : 0.0, h[2], h[3]);
+            std::fprintf(stderr, "route resident: margin=%g ranks=%d-%d decode windows: tail=%llu swaps=%llu (%.1f%%) non-resident %llu -> %llu\n",
+                         rr_margin_, rr_lo_, rr_hi_, h[4], h[5], h[4] ? 100.0 * h[5] / h[4] : 0.0, h[6], h[7]);
+        }
+        cudaFree(rr_stats_);
+        rr_stats_ = nullptr;
+    }
     if (ev_fork_) cudaEventDestroy(ev_fork_);
     if (ev_join_) cudaEventDestroy(ev_join_);
     if (arena_) cudaFree(arena_);
@@ -538,6 +551,20 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
         const size_t np = (size_t) g.n_layers * kProfPer + 4;
         if (cudaMalloc((void**) &prof_, np * 8) != cudaSuccess) { prof_on_ = false; prof_ = nullptr; cudaGetLastError(); }
         else { cudaMemset(prof_, 0, np * 8); prof_h_.assign(np, 0); }
+    }
+    // The two residency-aware routers are off unless the environment names them: both change the output.
+    if (const char* v = std::getenv("HYPERCORE_ROUTE_PRIOR")) route_prior_ = (float) std::atof(v);
+    if (const char* v = std::getenv("HYPERCORE_ROUTE_RESIDENT")) {
+        rr_margin_ = (float) std::atof(v);
+        rr_on_ = rr_margin_ > 0.0f;
+        if (rr_on_) {
+            if (const char* r = std::getenv("HYPERCORE_ROUTE_RESIDENT_RANKS"))
+                std::sscanf(r, "%d-%d", &rr_lo_, &rr_hi_);
+            if (cudaMalloc((void**) &rr_stats_, 8 * sizeof(unsigned long long)) != cudaSuccess) {
+                rr_stats_ = nullptr; cudaGetLastError();
+                std::fprintf(stderr, "route resident: the counters could not be allocated on this GPU; the swap runs without them\n");
+            } else cudaMemset(rr_stats_, 0, 8 * sizeof(unsigned long long));
+        }
     }
     Bump real;
     real.base = (uint8_t*) arena_;
@@ -1137,6 +1164,16 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                 bf16_gemv_fp32_mmvf_multi(mixed_ + tb * N, N, (const uint16_t*) w_router->data, logits_ + tb * NE, NE, N,
                                           NE, n, cs);
                 native_router_top10_multi(logits_ + tb * NE, ids_ + tb * K, w_ + tb * K, n, cs);
+                if (route_prior_ > 0.0f && hits_.d_res != nullptr)   // HYPERCORE_ROUTE_PRIOR: a resident expert's logit
+                    route_prior_top10(logits_ + tb * NE, hits_.d_res + l * g.n_expert, route_prior_,
+                                      ids_ + tb * K, w_ + tb * K, n, cs);
+                if (rr_on_ && hits_.d_res != nullptr) {              // HYPERCORE_ROUTE_RESIDENT: swap a tail pick that
+                    // is not in VRAM for the best resident one within the margin (opt-in, changes the output)
+                    try {
+                        route_resident_swap(logits_ + tb * NE, ids_ + tb * K, w_ + tb * K, hits_.d_res + l * g.n_expert,
+                                          n, rr_margin_, rr_lo_, rr_hi_, rr_stats_ != nullptr ? rr_stats_ + (n <= 8 ? 4 : 0) : nullptr, cs);
+                    } catch (const std::exception& e) { err = "verify route resident: " + std::string(e.what()); return false; }
+                }
             } catch (const std::exception& e) { err = "verify router: " + std::string(e.what()); return false; }
 #if defined(HYPERCORE_HIP_GFX906)
         } else if (dec_batch) {

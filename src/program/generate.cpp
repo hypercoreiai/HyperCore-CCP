@@ -65,6 +65,7 @@
 #include "hypercore/spec/suffix_drafter.hpp"
 #include "hypercore/kernels/cvec.hpp"
 #include "hypercore/core/progress.hpp"
+#include "hypercore/platform/file_tier.hpp"
 #include "hypercore/core/device.hpp"
 #include "hypercore/core/emulate.hpp"
 #ifndef NOMINMAX
@@ -371,6 +372,7 @@ struct Options {
     std::string embd_gguf;
     /// Plan v0.3 P2: how the n-gram table is read. Direct (default) = unbuffered SSD reads, table never in RAM.
     std::string ple_io = "direct";
+    bool ple_io_explicit = false;   ///< #2040: --ple-io was given on the command line, so the probe only reports
     int64_t ple_row_cache = 1 << 20;   ///< bounded row cache (rows of 90 B); 0 disables
     int ple_inflight = 256;   // the prompt path reads a chunk's rows at once: 64 left the SSD half idle (32K: 303 -> 189 ms)
     double ple_delay_us = 0;           ///< fault injection: every row read completes no earlier than this
@@ -1087,6 +1089,30 @@ int on_rotational_disk(const std::string& path, std::string& dev) {
     return -1;
 }
 
+/// #2040: how fast this table's rows actually come in Direct mode: 4096 random 4 KiB reads, the pattern a prompt
+/// gather makes. -1 when the table is too small or a read failed. The 15K rows/s bar is NVMe-calibrated; a SATA SSD
+/// sits under it and mmap is slower there, so the switch is never made on its own.
+static double ple_direct_rows_per_s(hypercore::kernels::PleTable& t) {
+    const uint64_t n = t.rows();
+    if (n < 4096) return -1.0;
+    constexpr size_t kTok = 4;                                  // 64 rows a batch
+    // gather_batch writes n_tokens * PLE_N_HEADS * PLE_HEAD_DIM floats (16 * 160 = 2560 a token):
+    // a buffer sized per token in the wrong unit overruns the heap and glibc aborts the start.
+    std::vector<uint32_t> rows(kTok * hypercore::kernels::PLE_N_HEADS);
+    std::vector<float> out(kTok * hypercore::kernels::PLE_N_HEADS * hypercore::kernels::PLE_HEAD_DIM);
+    double ms = 0.0, got = 0.0;
+    for (size_t b = 0; b < 64; ++b) {
+        for (size_t i = 0; i < rows.size(); ++i)
+            rows[i] = (uint32_t)((b * 97ull + i * 13ull) % n);
+        const auto t0 = std::chrono::steady_clock::now();
+        std::string err;
+        if (!t.gather_batch(rows.data(), kTok, out.data(), err)) return -1.0;
+        ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        got += (double) rows.size();
+    }
+    return ms > 0.0 ? got / (ms / 1000.0) : -1.0;
+}
+
 // #605: the engine's threads in uninterruptible sleep (state D - almost always waiting for the disk), and where
 // (wchan): 16 threads in blk_io_schedule is a disk that cannot keep up, not a deadlock in the engine
 void disk_wait_threads(std::FILE* f) {
@@ -1141,12 +1167,29 @@ void pl_diag_print(std::FILE* f) {
             if (d.v[st][par] != nullptr) d.v[st][par]->diag_pipelined(f, names[st][par]);
 }
 
+/// #2065: the VRAM free when the current request began (-1 before the first); the stall report prints it, because a
+/// card this full is the one measured cause of a window that never finishes (the driver pages GPU memory).
+std::atomic<int64_t> g_req_vram_free_mib{-1};
+constexpr int64_t kVramSafeMib =
+#ifdef _WIN32
+    1024;   // WDDM pages instead of failing: the line #2065 fell below
+#else
+    512;
+#endif
+
 void stall_report(std::FILE* f, uint64_t layers_during) {
     hypercore::core::Progress& p = hypercore::core::progress();
     std::fprintf(f, "hypercore serve: stall report (engine %s): stage \"%s\" for %lld s; %llu layers served since the "
                     "last finished step (0 = stopped, more = slow)\n", HYPERCORE_VERSION, stage_text().c_str(),
                  (long long) ((hypercore::core::progress_now_ms() - p.since_ms.load()) / 1000),
                  (unsigned long long) layers_during);
+    if (const int64_t vf = g_req_vram_free_mib.load(); vf >= 0) {
+        std::fprintf(f, "  VRAM free when this request began: %lld MiB%s\n", (long long) vf,
+                     vf >= kVramSafeMib ? "" : " - LOW: a card this full can page GPU memory to system RAM (decode "
+                     "falls to a few tok/s, then a window never finishes, #2065); a larger --vram-reserve-mib, a "
+                     "smaller --max-context, or 'Prefer No Sysmem Fallback' for the engine in the NVIDIA control panel "
+                     "(docs/DETAILS.md) leaves room");
+    }
     for (int pass = 0; pass < 2; ++pass) {
         if (pass == 1) {
             std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -1193,11 +1236,21 @@ void stall_report(std::FILE* f, uint64_t layers_during) {
 
 /// HYPERCORE_TRACE=1: the VRAM left at a step of the startup (finds what fills the card after the cache is sized)
 void mem_mark(const char* where) {
-    static const bool on = std::getenv("HYPERCORE_TRACE") != nullptr;
-    if (!on) return;
+    static const char* const env = std::getenv("HYPERCORE_TRACE");
+    if (env == nullptr) return;
     size_t free_b = 0, total_b = 0;
     cudaMemGetInfo(&free_b, &total_b);
     std::fprintf(stderr, "hypercore trace: %lld MiB free after %s\n", (long long) (free_b >> 20), where);
+    // HYPERCORE_TRACE=2: also wait for the device here and name the first step after which it reports an error.  A
+    // "sticky" failure (an unspecified launch failure surfacing in a later, unrelated call) is then pinned to the
+    // step that ran the faulting work.  Only a diagnostic: it adds a synchronisation per mark.
+    if (env[0] == '2') {
+        const cudaError_t sync_e = cudaDeviceSynchronize();
+        const cudaError_t last_e = cudaGetLastError();
+        std::fprintf(stderr, "hypercore trace: device %s after %s (sync: %s, last error: %s)\n",
+                     sync_e == cudaSuccess && last_e == cudaSuccess ? "ok" : "ERROR", where,
+                     cudaGetErrorString(sync_e), cudaGetErrorString(last_e));
+    }
 }
 
 /// #463's A/B: HYPERCORE_ADAPT_NOWAIT=1 lets a verify window start before the adaptive tier's copies have landed (0.1.37)
@@ -1653,7 +1706,7 @@ int main(int argc, char** argv) {
         else if (a == "--dump-routing") o.dump_routing = next("--dump-routing");
         else if (a == "--ple-gguf") o.ple_gguf = next("--ple-gguf");
         else if (a == "--no-ple") o.no_ple = true;
-        else if (a == "--ple-io") o.ple_io = next("--ple-io");
+        else if (a == "--ple-io") { o.ple_io = next("--ple-io"); o.ple_io_explicit = true; }
         else if (a == "--ple-row-cache") o.ple_row_cache = std::atoll(next("--ple-row-cache"));
         else if (a == "--ple-inflight") o.ple_inflight = std::atoi(next("--ple-inflight"));
         else if (a == "--ple-delay-us") o.ple_delay_us = std::atof(next("--ple-delay-us"));
@@ -2824,6 +2877,19 @@ int main(int argc, char** argv) {
         }
 #if !defined(_WIN32)
         if (pio.mode == hypercore::kernels::PleIo::Direct) {
+            // #1984 #1971 #2040: on no platform is mmap chosen for you. Windows: the mapped reads stalled prompts
+            // (the first chunk waits for 16 serial page faults a token from a cold table with no progress mark).
+            // Linux SATA SSD: the 15K rows/s bar is NVMe-calibrated, a SATA SSD tops under it and mmap was 7x slower
+            // there (#2040). The probe measures this table, and says so whatever the answer is.
+            const double rps = ple_direct_rows_per_s(ple_table);
+            if (rps >= 0.0 && rps < 15000.0)
+                std::fprintf(stderr, "hypercore generate: the PLE table reads %s at %.0f rows/s of random 4 KiB "
+                                     "reads (%.0f MiB/s): a prompt can spend minutes reading layer 1 and trip the "
+                                     "stall watchdog (#1425, #1629). --ple-io mmap was 40-100x faster on some "
+                                     "DRAM-less NVMe drives but 7x slower on a SATA SSD (#2040), so it is not chosen "
+                                     "for you; --ple-io ram needs the RAM for the table%s\n",
+                             o.ple_gguf.c_str(), rps, rps * 4096.0 / 1e6,
+                             o.ple_io_explicit ? "" : " (kept direct: pass --ple-io mmap or --ple-io ram to change it)");
             // #605: --ple-io direct's random reads (up to --ple-inflight at once) are for SSDs; a rotational disk
             // can take longer than the stall watchdog's 60 s for one prompt chunk's rows.  Recommended, not forced.
             std::string dev;
@@ -6036,6 +6102,7 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        mem_mark("before the prompt path init");   // #2013: the marks around the prompt-path init show where the card fills
         for (;;) {
             const int r = init_prompt_paths();
             if (r == 0) break;
@@ -6533,6 +6600,14 @@ int main(int argc, char** argv) {
         // addresses change: all parked images live in ordinary host vectors.
         auto park_current_body = [&](size_t held) -> bool {
             if (!conversations.enabled() || !live_ok || live.empty()) return true;
+            // #2049: parking copies the outgoing conversation's running checkpoints and K/V into host memory, which
+            // is a silent stretch of the "request" stage; when the OS has paged that memory out it takes minutes.
+            // Named, so a stall report says "parking"; its copies beat (conversation_copy.hpp), so the watchdog sees
+            // a park that moves and ends one that does not.
+            struct ParkStage {
+                ParkStage() { hypercore::core::progress_at("request: parking the previous conversation"); }
+                ~ParkStage() { hypercore::core::progress_at("request"); hypercore::core::progress_beat(); }
+            } park_stage;
             // #342: before make_room evicts oldest-first, the copies of this conversation a turn back go (they hold
             // nothing the outgoing chain does not, apart from the tail this conversation rewrote)
             if (const size_t dropped = conversations.drop_superseded(live, live_imgs, checks, cvec_cached))
@@ -7464,17 +7539,44 @@ int main(int argc, char** argv) {
         {
             const char* ws = std::getenv("HYPERCORE_WATCHDOG_S");
             const int limit = ws ? std::atoi(ws) : 60;   // one step (a prompt layer, a verify window) takes seconds
+            // #1407 #1984 #1971: while the OS is still reading the file tier (major faults / bytes read advance), a
+            // silent step is slow, not stuck; it gets up to HYPERCORE_WATCHDOG_IO_S (default 10 x the limit) of such
+            // time.  0 = no allowance.  Before this a 46 GB box's 20K prompt was stopped after ~90 s of page-ins.
+            const char* wio = std::getenv("HYPERCORE_WATCHDOG_IO_S");
+            const int io_limit = wio ? std::atoi(wio) : limit * 10;
             if (limit > 0)
-                std::thread([limit] {
+                std::thread([limit, io_limit] {
                     hypercore::core::Progress& p = hypercore::core::progress();
                     uint64_t last = p.beats.load(), ticks_at = p.ticks.load();
                     auto since = std::chrono::steady_clock::now();
+                    auto io_since = since;
+                    uint64_t io_last = hypercore::platform::file_tier_activity();
+                    auto io_active_at = since;   // the last second the file tier was busy
+                    bool io_noted = false;
                     for (;;) {
                         std::this_thread::sleep_for(std::chrono::seconds(1));
                         const auto now = std::chrono::steady_clock::now();
                         const uint64_t b = p.beats.load();
-                        if (!p.busy.load() || b != last) { last = b; ticks_at = p.ticks.load(); since = now; continue; }
+                        if (!p.busy.load() || b != last) { last = b; ticks_at = p.ticks.load(); since = now; io_since = now; io_active_at = now; io_noted = false; io_last = hypercore::platform::file_tier_activity(); continue; }
+                        {   // sampled every second, also during the first `limit` seconds, so a busy file tier is seen
+                            const uint64_t a = hypercore::platform::file_tier_activity();
+                            if (hypercore::platform::file_tier_busy(io_last, a)) io_active_at = now;
+                            io_last = a;
+                        }
                         if (now - since < std::chrono::seconds(limit)) continue;
+                        if (io_limit > limit && now - io_since < std::chrono::seconds(io_limit)) {
+                            // a thrashing host has seconds with almost no reads (one thread waiting on one page while
+                            // swap is written): busy within the last 10 s still counts as slow, not stuck
+                            if (now - io_active_at < std::chrono::seconds(10)) {
+                                if (!io_noted) {
+                                    io_noted = true;
+                                    std::fprintf(stderr, "hypercore serve: no step finished for %d s, but the file tier is still being read "
+                                                         "(slow storage or low RAM): waiting up to %d s in all (HYPERCORE_WATCHDOG_IO_S) (#1407)\n",
+                                                 limit, io_limit);
+                                }
+                                continue;
+                            }
+                        }
                         // a blocking step's explicit allowance (session files): still within it, not yet stuck
                         if (hypercore::core::progress_now_ms() < p.allow_until_ms.load()) continue;
                         std::fprintf(stderr, "hypercore serve: no progress for %d s during a request (%s) - stopping "
@@ -8057,6 +8159,24 @@ int main(int argc, char** argv) {
                     hypercore::core::progress_at("idle");
                 }
             } busy_scope;
+            {   // #2065: said, never changed - the free VRAM now (the verify windows' captures and the batch layouts
+                // eat into what startup reported), once per 128 MiB lower it gets
+                size_t vf_b = 0, vt_b = 0;
+            if (cudaMemGetInfo(&vf_b, &vt_b) == cudaSuccess) {
+                const int64_t vf = (int64_t) (vf_b >> 20);
+                g_req_vram_free_mib.store(vf);
+                static int64_t low_said_at = INT64_MAX;
+                if (vf < kVramSafeMib && vf + 128 <= low_said_at) {
+                    low_said_at = vf;
+                    std::fprintf(stderr, "hypercore serve: WARNING: only %lld MiB of VRAM free at the start of this request "
+                                         "(below %lld MiB): when the card is this full the driver can page GPU memory "
+                                         "to system RAM, decode falls to a few tok/s and a window may never finish "
+                                         "(#2065). Add --vram-reserve-mib %lld to the config's args, or lower "
+                                         "--max-context / --batch\n", (long long) vf, (long long) kVramSafeMib,
+                                 (long long) ((o.vram_reserve_mib + (kVramSafeMib - vf) + 63) / 64 * 64));
+                }
+            }
+            }
             stop_req.store(false);   // a STOP that arrived between requests is stale
             err.clear();
             // Disk sessions: SAVE <path> | RESTORE <path>, between requests (the path runs to the end of the line,

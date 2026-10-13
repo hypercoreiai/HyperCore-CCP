@@ -370,6 +370,14 @@ run it; the report below is from a community machine: an RX 6900 XT 16 GB (gfx10
   `platform_memory_test` cannot `mlock` at the shell's default `ulimit -l`).
 - **gfx1031** (RX 6700 XT, #524): setup knows it (the `gfx103X-all` wheels, unvalidated); its reporter runs it daily
   on one card.
+- **The draft's side stream (`HYPERCORE_MTP_SIDE_STREAM`, #2055):** HIP keeps the shared expert on the drafter's main
+  stream, so nothing uses the branch stream, and #1240 stopped creating it and its two events (an R9700 lost prompt
+  speed with them after the first request). gfx103x is the exception and creates the stream, and nothing else: on an
+  RX 6800 under Windows (`HYPERCORE_HIP_PROMPT_F16=1`, IQ3_XXS, two runs each) a 7.9K-token prompt reads at 798-808
+  tok/s with it and 584-596 without, and a 30.4K-token one at 855-863 against 553-600; `HYPERCORE_PREFILL_TIMING=1`
+  puts the whole difference in the prompt path's "wait copy" phase (3,081 -> 75 ms and 12,642 -> 288 ms). Decode and
+  the output are the same either way. `HYPERCORE_MTP_SIDE_STREAM=0` turns it off on gfx103x, `=1` creates it on another
+  HIP card. Measured on one card and one OS; a Linux gfx103x number is welcome.
 - **Not validated:** gfx1032 (the same `dp4a` path, no hardware report), setup's own build path and the
   `gfx103X-all` wheels on gfx1030, images, answer-quality benchmarks. RDNA1 (gfx1012, RX 5500 XT) builds by hand:
   [OLDER_GPUS.md](OLDER_GPUS.md#amd-building-gfx906-and-gfx1012).

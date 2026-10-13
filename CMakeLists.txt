@@ -118,6 +118,9 @@ endif()
 option(HYPERCORE_BUILD_TESTS "Build the test suite" ${_hypercore_tests_default})
 option(HYPERCORE_BUILD_CONVERSATION_TESTS "Build standalone conversation cache tests" OFF)
 option(HYPERCORE_WERROR "Treat compiler warnings as errors" OFF)
+# #2027: defined here, before the GPU section reads it to register the native-expert tests (it was defined at the
+# native-experts section far below, so a first configure registered four tests fewer than the second)
+option(HYPERCORE_NATIVE_EXPERTS "Native (IQ) expert support through ggml-cpu" ON)
 
 if(HYPERCORE_BUILD_CONVERSATION_TESTS)
   enable_testing()
@@ -304,7 +307,7 @@ target_link_libraries(hypercore-plan PRIVATE hypercore_plan)
 # ---- hypercore_core (GPU runtime) ---------------------------------------------
 # Only built when a GPU backend is on, so the Phase 1 targets keep working without a toolkit.
 if(HYPERCORE_ENABLE_CUDA OR HYPERCORE_ENABLE_HIP)
-  add_library(hypercore_core STATIC src/core/device.cu src/core/pinned.cu src/platform/memory.cpp src/core/graph.cpp src/core/weights.cpp
+  add_library(hypercore_core STATIC src/core/device.cu src/core/pinned.cu src/platform/memory.cpp src/platform/file_tier.cpp src/core/graph.cpp src/core/weights.cpp
                                src/core/layout.cpp)
   target_include_directories(hypercore_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
   if(HYPERCORE_ENABLE_CUDA AND HYPERCORE_EXPERIMENTAL_SM60)
@@ -368,6 +371,7 @@ if(HYPERCORE_ENABLE_CUDA OR HYPERCORE_ENABLE_HIP)
                           src/kernels/cuda/native_gdn.cu
                           src/kernels/cuda/native_gr_postops.cu
                           src/kernels/cuda/native_router.cu
+                          src/kernels/cuda/route_residency.cu
                           src/kernels/cuda/native_gdn_preprocess.cu
                           src/kernels/cuda/native_qsa.cu
                           src/kernels/cuda/native_rope.cu
@@ -504,6 +508,26 @@ if(HYPERCORE_ENABLE_CUDA OR HYPERCORE_ENABLE_HIP)
     target_link_libraries(vmm_test PRIVATE hypercore_engine)
     add_test(NAME vmm_test COMMAND vmm_test)
     set_tests_properties(vmm_test PROPERTIES TIMEOUT 60)
+  endif()
+  # #1996: the pinned bounce ring the prompt path's pageable uploads go through.  Needs a CUDA device; the test
+  # prints "skipped" and exits 0 when there is none.  The second arm forces the pageable fallback.
+  if(HYPERCORE_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/core/pinned_ring_test.cpp")
+    enable_testing()
+    add_executable(pinned_ring_test tests/core/pinned_ring_test.cpp)
+    target_include_directories(pinned_ring_test PRIVATE include)
+    target_link_libraries(pinned_ring_test PRIVATE hypercore_engine)
+    add_test(NAME pinned_ring_test COMMAND pinned_ring_test)
+    set_tests_properties(pinned_ring_test PROPERTIES TIMEOUT 60)
+    add_test(NAME pinned_ring_test_pageable COMMAND pinned_ring_test)
+    set_tests_properties(pinned_ring_test_pageable PROPERTIES TIMEOUT 60 ENVIRONMENT "HYPERCORE_TEST_PAGEABLE=1")
+  endif()
+  # #2055: the drafter's branch stream is per-architecture on HIP.  String logic only, so it needs no GPU.
+  if(HYPERCORE_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/core/mtp_side_stream_test.cpp")
+    enable_testing()
+    add_executable(mtp_side_stream_test tests/core/mtp_side_stream_test.cpp)
+    target_include_directories(mtp_side_stream_test PRIVATE include)
+    add_test(NAME mtp_side_stream_test COMMAND mtp_side_stream_test)
+    set_tests_properties(mtp_side_stream_test PROPERTIES TIMEOUT 30)
   endif()
   # #477: the learned expert profile (--expert-profile-save): its order and make_profile.py's file format (CPU only)
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/core/expert_profile_save_test.cpp")
@@ -862,6 +886,15 @@ if(HYPERCORE_ENABLE_CUDA OR HYPERCORE_ENABLE_HIP)
   target_link_libraries(route_window_parity PRIVATE hypercore_kernels ${_hypercore_gpu_runtime_target})
   add_test(NAME route_window_parity COMMAND route_window_parity)
 
+  # the two opt-in residency-aware routers (HYPERCORE_ROUTE_PRIOR / HYPERCORE_ROUTE_RESIDENT) against a scalar reference
+  if(HYPERCORE_ENABLE_CUDA)
+    add_executable(route_residency_parity src/kernels/route_residency_parity.cu)
+    target_include_directories(route_residency_parity PRIVATE ${_hypercore_gpu_include_directories})
+    target_link_libraries(route_residency_parity PRIVATE hypercore_kernels ${_hypercore_gpu_runtime_target})
+    add_test(NAME route_residency_parity COMMAND route_residency_parity)
+    set_tests_properties(route_residency_parity PROPERTIES TIMEOUT 120)
+  endif()
+
   add_executable(router_top10_parity src/kernels/router_top10_parity.cpp)
   target_include_directories(router_top10_parity PRIVATE ${_hypercore_gpu_include_directories})
   target_link_libraries(router_top10_parity PRIVATE hypercore_kernels ${_hypercore_gpu_runtime_target})
@@ -1136,7 +1169,7 @@ target_link_libraries(hypercore_kernels_cpu PUBLIC Threads::Threads)
 # The CPU computes a native expert with ggml-cpu's own dot products (`ggml_get_type_traits_cpu`), so an IQ
 # weight means exactly what it means in llama.cpp.  ggml is built static from a llama.cpp checkout: a local one
 # with -DHYPERCORE_GGML_DIR=..., otherwise the pinned upstream commit (third_party/ggml/VERSION.txt).
-option(HYPERCORE_NATIVE_EXPERTS "Native (IQ) expert support through ggml-cpu" ON)
+# HYPERCORE_NATIVE_EXPERTS is defined near the other options, above (#2027).
 set(HYPERCORE_GGML_DIR "" CACHE PATH "llama.cpp checkout to take ggml from (empty: fetch the pinned commit)")
 if(HYPERCORE_PREFILL_MMQ AND NOT HYPERCORE_NATIVE_EXPERTS)
   message(FATAL_ERROR "HYPERCORE_PREFILL_MMQ requires HYPERCORE_NATIVE_EXPERTS=ON for GGML sources")
@@ -1480,6 +1513,23 @@ if(HYPERCORE_BUILD_TESTS)
     target_include_directories(direct_file_async_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(direct_file_async_test PRIVATE Threads::Threads)
     add_test(NAME direct_file_async_test COMMAND direct_file_async_test)
+  endif()
+  # #1407 #1984 #1971: the file-tier activity the #29 watchdog reads before it stops a slow-but-alive engine.
+  # No GPU, no model: it runs on the platform's own counters.
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/platform/file_tier_test.cpp")
+    add_executable(file_tier_test tests/platform/file_tier_test.cpp src/platform/file_tier.cpp)
+    target_include_directories(file_tier_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(file_tier_test PRIVATE Threads::Threads)
+    add_test(NAME file_tier_test COMMAND file_tier_test)
+    set_tests_properties(file_tier_test PROPERTIES TIMEOUT 60)
+  endif()
+  # #2049: the parked-conversation copies beat the #29 watchdog.  Header-only, no GPU, no model.
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/core/conversation_copy_test.cpp")
+    add_executable(conversation_copy_test tests/core/conversation_copy_test.cpp)
+    target_include_directories(conversation_copy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(conversation_copy_test PRIVATE Threads::Threads)
+    add_test(NAME conversation_copy_test COMMAND conversation_copy_test)
+    set_tests_properties(conversation_copy_test PROPERTIES TIMEOUT 60)
   endif()
 endif()
 

@@ -394,6 +394,13 @@ private:
     double prof_sum_[2][kProfPer] = {};   // [GDN / QSA layers][stage]
     int64_t prof_windows_ = 0;
 
+    // HYPERCORE_ROUTE_PRIOR / HYPERCORE_ROUTE_RESIDENT (opt-in, changes the output): the residency-aware routers.
+    float route_prior_ = 0.0f;                  // the logit bonus a resident expert gets when the 10 are picked
+    bool rr_on_ = false;                        // HYPERCORE_ROUTE_RESIDENT=margin
+    float rr_margin_ = 0.0f;
+    int rr_lo_ = 6, rr_hi_ = 9;                 // the ranks the swap may touch
+    unsigned long long* rr_stats_ = nullptr;    // device: 8 counters, [0..3] prompt windows, [4..7] decode windows
+
     const WeightTable* wt_ = nullptr;
     const ModelGeometry* g_ = nullptr;
     SessionState* ss_ = nullptr;
