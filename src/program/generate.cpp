@@ -59,6 +59,7 @@
 #include "hypercore/program/logits_selection.hpp"
 #include "hypercore/program/conv_cache.hpp"
 #include "hypercore/program/message_boundary.hpp"
+#include "hypercore/program/batch_groups.hpp"
 #include "hypercore/spec/draft_policy.hpp"
 #include "hypercore/spec/draft_source.hpp"
 #include "hypercore/spec/suffix_drafter.hpp"
@@ -533,6 +534,8 @@ struct Options {
     /// The --batch slots in this many groups pipelined through the stages of a layer split (stage k
     /// runs one group while stage k+1 runs another).  1 = every slot in one window, stage after stage.
     int batch_groups = 1;
+    bool batch_groups_set = false;    ///< --batch-groups was given (a number or `auto`)
+    bool batch_groups_auto = false;   ///< ... as `auto`: the most groups that divide the slots (batch_groups.hpp)
     bool batch_mtp = false;      ///< --batch-mtp / HYPERCORE_BATCH_MTP=1 (opt-in): one MTP proposal per batch slot
     std::string spec_oracle;
     int spec_corrupt = 0;
@@ -737,7 +740,9 @@ void usage() {
                  "                       each slot with its own session (VRAM like the main one); docs/BATCHING.md\n"
                  "  --batch-mtp          --batch (opt-in, one GPU, needs --mtp and --spec): each slot also verifies one MTP\n"
                  "                       proposal per window (HYPERCORE_BATCH_MTP=1 does the same); needs VRAM per slot\n"
-                 "  --batch-groups G     --batch with a layer split: the slots in G groups pipelined through the GPUs\n"
+                 "  --batch-groups G|auto  --batch with a layer split: the slots in G groups pipelined through the GPUs;\n"
+                 "                       auto (the default for a layer split) = the most that divide the slots; 1 = the\n"
+                 "                       serial windows --batch-mtp runs its drafts in (HYPERCORE_BATCH_MTP_SERIAL=1)\n"
                  "  --pipeline-windows N --serve with a layer split on two GPUs (opt-in): one conversation's verify windows\n"
                  "                       with the GPUs overlapped - 1 = the prompt's short reads, 2 = decode as well\n"
                  "                       (stage 0 runs the next window while stage 1 verifies this one); docs/MULTI_GPU.md\n"
@@ -1745,7 +1750,12 @@ int main(int argc, char** argv) {
         else if (a == "--batch") o.batch = std::atoi(next("--batch"));
         else if (a == "--slots") o.batch = std::atoi(next("--slots"));   // the same as --batch
         else if (a == "--trim-stage-weights") o.trim_stage_weights = true;
-        else if (a == "--batch-groups") o.batch_groups = std::atoi(next("--batch-groups"));
+        else if (a == "--batch-groups") {
+            const std::string g = next("--batch-groups");
+            o.batch_groups_set = true;
+            if (g == "auto") o.batch_groups_auto = true;
+            else o.batch_groups = std::atoi(g.c_str());
+        }
         else if (a == "--batch-mtp") o.batch_mtp = true;
         else if (a == "--spec-oracle") o.spec_oracle = next("--spec-oracle");
         else if (a == "--spec-corrupt") o.spec_corrupt = std::atoi(next("--spec-corrupt"));
@@ -3541,8 +3551,54 @@ int main(int argc, char** argv) {
     // engine still starts and serves one request at a time.
     // --batch-mtp / HYPERCORE_BATCH_MTP=1 (opt-in): a slot also verifies one MTP proposal per window.  Recommend, never
     // force: when it cannot run it is said and left off (plain batching still starts); default off = exactly 0.1.39.
-    const char* batch_mtp_env = std::getenv("HYPERCORE_BATCH_MTP");
-    bool batch_mtp = o.batch_mtp || (batch_mtp_env != nullptr && batch_mtp_env[0] != '\0' && batch_mtp_env[0] != '0');
+    // --batch-groups: given as a number or `auto`, or `auto` by default for a layer split with --batch >= 2.  The
+    // pipelined slot groups run neither --batch-mtp's drafts nor the batch adaptive tier (--adapt-async 1), so the
+    // default gives way to one group only when one of those is asked for and the serial windows were wanted:
+    // HYPERCORE_BATCH_MTP_SERIAL=1 (STRATA_BATCH_MTP_SERIAL is read as the older name) or --batch-groups 1
+    // (hypercore/program/batch_groups.hpp).  Evaluated again once the slots that fit are known, and BEFORE the
+    // --batch-mtp gate below, which must see the resolved number.
+    // --batch-groups: given as a number or `auto`, or `auto` by default for a layer split with --batch >= 2.  The
+    // pipelined slot groups run neither --batch-mtp's drafts nor the batch adaptive tier (--adapt-async 1), so the
+    // default gives way to one group only when one of those is asked for and the serial windows were wanted:
+    // HYPERCORE_BATCH_MTP_SERIAL=1 (STRATA_BATCH_MTP_SERIAL is read as the older name) or --batch-groups 1
+    // (hypercore/program/batch_groups.hpp).  Resolved before the --batch-mtp gate below, and again once the slots
+    // that actually fit are known.
+    auto env_on = [](const char* name) {
+        const char* v = std::getenv(name);
+        return v != nullptr && v[0] != '\0' && v[0] != '0';
+    };
+    const bool mtp_serial = env_on("HYPERCORE_BATCH_MTP_SERIAL") || env_on("STRATA_BATCH_MTP_SERIAL");
+    const bool mtp_requested = o.batch_mtp || env_on("HYPERCORE_BATCH_MTP");
+    bool batch_mtp = mtp_requested;
+    auto batch_groups_for = [&](bool mtp_on) {
+        hypercore::program::batch_groups::Input bin;
+        bin.set = o.batch_groups_set;
+        bin.auto_given = o.batch_groups_auto;
+        bin.given = o.batch_groups;
+        bin.batch = o.batch;
+        bin.later_stages = (int) stages.size();
+        bin.batch_mtp = mtp_on;
+        bin.mtp_serial = mtp_serial;
+        bin.adapt_async = o.adapt_async != 0;
+        return hypercore::program::batch_groups::resolve(bin);
+    };
+    int groups_said = 0;
+    auto resolve_groups_auto = [&] {
+        const auto r = batch_groups_for(mtp_requested);   // the groups the features ASKED for need, not the ones the
+        // gate below may still refuse
+        if (!r.from_auto) return;
+        o.batch_groups = r.groups;
+        if (groups_said == r.groups) return;   // the second call, once the slots that fit are known, says nothing new
+        groups_said = r.groups;
+        if (r.serial != hypercore::program::batch_groups::Serial::None)
+            std::fprintf(stderr, "hypercore generate: --batch-groups auto: 1 group of %d slot%s - %s runs in the serial "
+                                 "windows, not in pipelined groups; --batch-groups %d would pipeline them\n", o.batch,
+                         o.batch == 1 ? "" : "s", hypercore::program::batch_groups::serial_what(r.serial), r.would_be);
+        else
+            std::fprintf(stderr, "hypercore generate: --batch-groups auto: %d group%s of %d slot%s\n", r.groups,
+                         r.groups == 1 ? "" : "s", o.batch / r.groups, o.batch / r.groups == 1 ? "" : "s");
+    };
+    if (o.batch > 0) resolve_groups_auto();
     if (batch_mtp) {
         const char* why = o.batch < 2 ? "it needs --batch 2 or more" : o.mtp.empty() ? "it needs --mtp"
                         : o.spec < 2 ? "it needs --spec T (T >= 2)" : (multi_gpu || split_same || !stages.empty())
@@ -3614,6 +3670,7 @@ int main(int argc, char** argv) {
         } else {
             o.batch = fit;
             if (o.batch_groups > 1 && o.batch % o.batch_groups != 0) o.batch_groups = 1;
+            resolve_groups_auto();   // (the slots that fit may not be the ones asked for)
             // the sessions' VRAM is the expert cache's: say what it costs (docs/BATCHING.md has the measured trade)
             std::fprintf(stderr, "hypercore generate: --batch %d: the slot sessions take %.2f GiB of VRAM on CUDA0 that the "
                                  "expert cache would otherwise hold\n", o.batch,

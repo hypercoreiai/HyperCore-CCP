@@ -26,6 +26,11 @@ check the engine's free-memory log before using it on a smaller card. If it cann
 split or helper GPU) the engine says so and batches as usual. RTX PRO 5000 owners measured +31% to +39% total
 throughput with 2 to 4 clients (a RX R9700 run too); it has not been validated with a layer split.
 
+The drafts run in the **serial** windows, one group. With a layer split the default `--batch-groups` is now `auto`
+(the pipeline), so `HYPERCORE_BATCH_MTP_SERIAL=1` - or `--batch-groups 1` - is what keeps the serial windows; the
+engine prints which it chose and why at start-up. (`STRATA_BATCH_MTP_SERIAL` is still read as the older name of the
+same knob.)
+
 With a layer split, the engine options go into the config's `args`:
 
 ```
@@ -36,7 +41,7 @@ With a layer split, the engine options go into the config's `args`:
 | Option | What it does |
 | --- | --- |
 | `"parallel": N` / `--batch N` / `--slots N` (2..8 normally) | up to N conversations have batch slots; more requests wait for a free slot. Each slot gets its own state (a session carved like the stage's own: GDN recurrence, QSA K/V and indexer, PLE history) on every GPU of the split. With grouped MTP, more than 8 slots can rotate through eight-row windows if memory permits. |
-| `--batch-groups G` | with a layer split: the N slots in G groups that flow through the GPUs as a pipeline (GPU k runs one group while GPU k+1 runs another). G must divide N. 1 = all slots in one window, GPU after GPU. |
+| `--batch-groups G` | with a layer split: the N slots in G groups that flow through the GPUs as a pipeline (GPU k runs one group while GPU k+1 runs another). G must divide N. 1 = all slots in one window, GPU after GPU. `--batch-groups auto`, and no `--batch-groups` at all with a layer split and `--batch` >= 2, picks the most groups, at most one per stage, that divide the slots. |
 | `--trim-stage-weights` | with an **explicit** `--layer-split` (e.g. `12,24,36`, not `auto`): every GPU loads only the dense weights of its own layers instead of the whole model's (the same as `HYPERCORE_STAGE_TRIM=1`, PR #639). The VRAM this frees goes to the expert cache. Useful without `--batch` too. |
 
 The engine never refuses a count it cannot run: it says so in its log and runs what it can - at most 8 slots by

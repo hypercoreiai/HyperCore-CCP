@@ -284,6 +284,11 @@ if(HYPERCORE_BUILD_TESTS)
   add_executable(tuning_header_arch_family_test tests/prefill/tuning_header_arch_family_test.cpp)
   target_include_directories(tuning_header_arch_family_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/prefill")
   add_test(NAME tuning_header_arch_family_test COMMAND tuning_header_arch_family_test)
+
+  # how many pipelined slot groups --batch runs with: pure arithmetic, no model, no GPU
+  add_executable(batch_groups_test src/program/batch_groups_test.cpp)
+  target_include_directories(batch_groups_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+  add_test(NAME batch_groups_test COMMAND batch_groups_test)
 endif()
 
 # ---- hypercore_plan ----------------------------------------------------------
