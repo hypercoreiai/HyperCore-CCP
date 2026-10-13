@@ -187,8 +187,11 @@ def chat_date(name: str) -> str:
 
 def chat_filename(name: str, when: str) -> str:
     """The summary file for one transcript: <date>-<name>. A transcript whose own name already
-    starts with its date (the archived _old_chats tree) must not get the date twice."""
+    starts with its date (the archived _old_chats tree) must not get the date twice, and a file
+    with no date in it at all is named by its own stem."""
     stem = Path(name).stem
+    if when == "unknown":
+        return f"{stem}.md"
     if stem.startswith(f"{when}-"):
         stem = stem[len(when) + 1:]
     return f"{when}-{stem}.md"

@@ -100,6 +100,11 @@ docs/strata-chat-*.md
 # The per-transcript summaries tools/build_history.py writes under data/history/chats/
 # are part of the built index, not raw dumps, so the rule above must not swallow them.
 !data/history/chats/*-chat-*.md
+# Raw transcripts copied into the history folder are context for the chat, not the built
+# index. They carry the machine's own tokens, so they stay out of the repository.
+data/history/chats/hypercore-chat-*.md
+data/history/chats/strata-chat-*.md
+data/history/chats/unknown-*.md
 
 # Archived history of the pre-restart repository (see README, "History").
 project_history_*
