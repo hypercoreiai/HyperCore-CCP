@@ -246,6 +246,20 @@ class StopStartRoute(unittest.TestCase):
         self.assertTrue(self.engine.running)
         self.assertFalse(self.svc.engine_stopped)
 
+    def test_load_on_a_stopped_engine_is_the_start_and_not_a_refusal(self):
+        """The Monitor's Load button posts /load. After /v1/stop that is the same request as
+        /v1/start, so it must not be answered 409 the way a chat request is.
+        """
+        self.post("/v1/stop")
+        code, body = self.post("/load")
+        self.assertEqual(code, 200, body)
+        self.assertEqual(body["status"], "loaded")
+        self.assertFalse(self.svc.engine_stopped)
+        self.assertTrue(self.engine.running)
+        code, body = self.chat("say something")
+        self.assertEqual(code, 200, body)
+        self.assertTrue(turn_tokens(body), "the Load button brought the engine back and it answered")
+
     def test_a_start_that_does_not_come_back_is_a_503(self):
         class DeadEngine(LifecycleEngine):
             def restart(self):

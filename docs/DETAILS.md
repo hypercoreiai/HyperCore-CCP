@@ -540,7 +540,9 @@ server, three server options (all off by default; also as keys in `hypercore-<mo
 `POST /unload` unloads it now (`409` while a request is running) and `POST /load` loads it ahead of a request (both
 with `Content-Type: application/json`, e.g. `curl -X POST -H "Content-Type: application/json" localhost:8081/unload`);
 `POST /unload?wait=60` waits up to 60 s (a bare `?wait` uses 300) for the running turn to finish first, so a peer that
-wants the GPU back gets the turn's time instead of a 409 on the first try.
+wants the GPU back gets the turn's time instead of a 409 on the first try. After `POST /v1/stop` the engine is stopped
+rather than unloaded: a chat request is then **409** `engine_stopped`, while `POST /load` is taken as the Start and
+brings it back.
 `/health` says `"loaded"`, `/v1/models` lists it as `unloaded` (like llama.cpp's router), `/props` sets
 `is_sleeping` and the Monitor shows the state. Unloading ends the engine process - and the image encoder, when images
 are on; it is started again first, as at a start - so their VRAM and RAM go straight back. The model files stay in

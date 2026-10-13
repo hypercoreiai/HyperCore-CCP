@@ -3881,6 +3881,17 @@ def make_handler(svc: Service):
                 return
             if path == "/load":                              # load now, e.g. ahead of a request
                 try:
+                    # A deliberate Stop is not an unload: the Monitor's Load button is exactly the Start
+                    # that brings the engine back, so it is not answered 409 to a request that plainly
+                    # means "run it again".
+                    if svc.engine_stopped:
+                        if not svc.start_engine():
+                            self._json(503, {"error": {"type": "server_error",
+                                                      "message": "the engine did not come back: see the engine log"}})
+                            return
+                        self._json(200, {"status": "loaded",
+                                         "note": "the engine was stopped with /v1/stop; this started it"})
+                        return
                     svc.load()
                     self._json(200, {"status": "loaded"})
                 except GpuBusy as e:
