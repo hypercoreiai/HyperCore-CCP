@@ -1311,6 +1311,12 @@ if(HYPERCORE_NATIVE_EXPERTS)
       target_compile_options(hypercore_mmq PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/bigobj>)
     endif()
     target_link_libraries(hypercore_mmq PUBLIC ggml-base ${_hypercore_gpu_runtime_target})
+    # ggml's common.cuh error helper calls cuGetErrorString (the driver API). -O2 removes the call; a
+    # Debug build (-O0) keeps it, and the link then needs libcuda. Harmless in Release, required for
+    # -DCMAKE_BUILD_TYPE=Debug.
+    if(HYPERCORE_ENABLE_CUDA)
+      target_link_libraries(hypercore_mmq PUBLIC CUDA::cuda_driver ${_hypercore_gpu_blas_target})
+    endif()
     if(HYPERCORE_MMQ_KQUANTS)
       target_compile_definitions(hypercore_mmq PRIVATE HYPERCORE_MMQ_KQUANTS=1)
     endif()
