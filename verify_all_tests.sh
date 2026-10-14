@@ -249,6 +249,19 @@ cmake --build "$VERIFY_BUILD" -j 4 --target hypercore
 EOF
 
 cat > "$TMPRUN/ctest.sh" <<'EOF'
+# A build tree configured with -DHYPERCORE_BUILD_TESTS=OFF registers no tests at all, and setup.py
+# applies that default on every run (setup.py:2910). Register them first: a stage that runs ctest
+# over an empty list would report a clean 0/0 and hide the whole suite.
+registered="$(ctest --test-dir "$VERIFY_BUILD" -N 2>/dev/null | grep -cE '^ *Test #[0-9]+')"
+if [ "$registered" = 0 ]; then
+    echo "no tests registered in $VERIFY_BUILD: reconfiguring with -DHYPERCORE_BUILD_TESTS=ON"
+    cmake -B "$VERIFY_BUILD" -DHYPERCORE_BUILD_TESTS=ON || exit 1
+    cmake --build "$VERIFY_BUILD" -j 4 || exit 1
+    registered="$(ctest --test-dir "$VERIFY_BUILD" -N 2>/dev/null | grep -cE '^ *Test #[0-9]+')"
+    echo "registered $registered tests"
+    [ "$registered" = 0 ] && { echo "still no tests: tests/CMakeLists.txt or bench/micro is missing"; exit 1; }
+fi
+echo "$registered tests registered"
 ctest --test-dir "$VERIFY_BUILD" -j 4 --output-on-failure
 EOF
 

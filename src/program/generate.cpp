@@ -10465,6 +10465,24 @@ int main(int argc, char** argv) {
                                      "%.1f MB read%s\n", (long long) req_hits, (long long) src.ram_reads(),
                              (long long) src.file_reads(), (double) src.file_read_bytes() / 1e6,
                              src.gguf_mode() ? " (the GGUF in place)" : "");
+            // HYPERCORE_MMVQ_IL: the interleaved dense matvec, counted per process.  A copy is built for one
+            // (n_in, ncols) of one group's activations and reused for the calls that share it; a build per call
+            // means the shapes alternate and nothing is ever reused.  With HYPERCORE_MMVQ_IL_CHECK=1 every such call
+            // is also run through native_mmvq and compared, so a wrong copy is named here instead of showing up as
+            // garbled text.
+            long long il_b = 0, il_u = 0, il_mc = 0, il_mv = 0; std::string il_first;
+            for (int st = 0; st < n_stages; ++st) {
+                const hypercore::core::Verifier& v = stage_ver(st);
+                il_b += v.il_builds; il_u += v.il_uses; il_mc += v.il_mismatch_calls; il_mv += v.il_mismatch_values;
+                if (il_first.empty()) il_first = v.il_first_mismatch;
+            }
+            if (il_mc)
+                std::fprintf(stderr, "hypercore serve: MMVQ_IL CHECK FAILED: %lld of %lld interleaved calls differ "
+                                     "from native_mmvq (%lld values), first %s\n",
+                             il_mc, il_b + il_u, il_mv, il_first.empty() ? "(unknown)" : il_first.c_str());
+            else if (il_b + il_u)
+                std::fprintf(stderr, "hypercore serve: interleaved matvec: %lld copies built, %lld calls reused one "
+                                     "(%lld calls)\n", il_b, il_u, il_b + il_u);
             // HYPERCORE_SPLIT_TIMING: where each verify stage's host time went, cumulative per window since the start
             // (waiting for its GPU to ring a layer, the CPU pool and plan per layer, staging the window)
             if (static const bool st_timing = std::getenv("HYPERCORE_SPLIT_TIMING") != nullptr; st_timing)

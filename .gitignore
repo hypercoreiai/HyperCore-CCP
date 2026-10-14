@@ -179,6 +179,7 @@ max_run_*.fifo
 /tune/__pycache__/
 
 # Local scan and calibration state, same class as .mcp_test_state.json.
+/state.md
 /.calibrate_result.json
 /.calibrate_progress.log
 /.blackbox_scan_state.json

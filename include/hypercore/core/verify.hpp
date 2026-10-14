@@ -283,6 +283,10 @@ public:
     double ms_wait = 0, ms_pool = 0, ms_host = 0, ms_commit = 0;
     double ms_gate = 0;   ///< host time a layer's plan was held for the adaptive copies (overlap only)
     int64_t windows = 0;
+    int64_t il_builds = 0, il_uses = 0;   ///< HYPERCORE_MMVQ_IL: interleaved copies built, and calls that reused one
+    int64_t il_mismatch_calls = 0, il_mismatch_values = 0;   ///< HYPERCORE_MMVQ_IL_CHECK: calls whose IL output differs
+    std::string il_first_mismatch;                          ///< the first such call, as "type n_in x ncols -> n_out"
+    std::vector<float> il_check_buf_;                       ///< the native_mmvq side of that comparison
     /// HYPERCORE_VERIFY_PROFILE=1 - GPU stage times of the windows since the last call (ms per
     /// window), as one line; empty when off.
     std::string profile_report();

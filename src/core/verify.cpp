@@ -690,12 +690,42 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
     // per group, after that group's xq_, and xil_ is sized for the widest window.  HYPERCORE_MMVQ_IL=0 keeps the
     // plain multi-column kernels.
     const bool il_on = mmvq_il_on() && xil_ != nullptr;
-    bool il_ready = false;   // xil_ holds xq_'s interleaved columns; reset whenever xq_ is rewritten
+    // HYPERCORE_MMVQ_IL_CHECK=1: run every interleaved call through native_mmvq as well and compare the two.  It
+    // halves the dense throughput, so it is a diagnostic, not a mode: a stale or wrongly shaped copy then shows up in
+    // the log instead of in the model's text.
+    static const bool il_check = [] { const char* v = std::getenv("HYPERCORE_MMVQ_IL_CHECK"); return v && v[0] != '0'; }();
+    // xil_ is a copy of xq_'s columns in the interleaved layout, so it is only valid for the (n_in, ncols) it was
+    // written for and only while xq_ still holds those activations.  Any write to xq_ or any different shape makes it
+    // stale: reading it anyway multiplies the weights against another layer's activations.
+    bool il_ready = false;
+    int il_n_in = 0, il_ncols = 0;
+    auto il_fresh = [&](int n_in, int ncols) { return il_ready && il_n_in == n_in && il_ncols == ncols; };
     auto mmvq = [&](int type, const void* weights, const void* x_q8_1, float* out, int n_in, int n_out, int ncols,
                     cudaStream_t s) {
         if (il_on && native_mmvq_il_supported(type, ncols, n_out)) {
-            if (!il_ready && ncols >= 2) { native_q8_1_interleave(x_q8_1, xil_, n_in, ncols, cs); il_ready = true; }
-            native_mmvq_il(type, weights, x_q8_1, il_ready ? xil_ : x_q8_1, out, n_in, n_out, ncols, cs);
+            if (ncols >= 2 && !il_fresh(n_in, ncols)) {
+                native_q8_1_interleave(x_q8_1, xil_, n_in, ncols, cs);
+                il_ready = true; il_n_in = n_in; il_ncols = ncols;
+                ++il_builds;
+            } else {
+                ++il_uses;
+            }
+            native_mmvq_il(type, weights, x_q8_1, il_fresh(n_in, ncols) ? xil_ : x_q8_1, out, n_in, n_out, ncols, cs);
+            if (il_check) {
+                il_check_buf_.assign((size_t) n_out * ncols, 0.0f);
+                native_mmvq(type, weights, x_q8_1, il_check_buf_.data(), n_in, n_out, ncols, cs);
+                if (cudaStreamSynchronize(cs) == cudaSuccess) {
+                    long long diff = 0;
+                    for (std::size_t i = 0; i < il_check_buf_.size(); ++i) if (out[i] != il_check_buf_[i]) ++diff;
+                    if (diff) {
+                        ++il_mismatch_calls; il_mismatch_values += diff;
+                        if (il_first_mismatch.empty())
+                            il_first_mismatch = std::string("type ") + std::to_string(type) + " n_in " +
+                                              std::to_string(n_in) + " x " + std::to_string(ncols) + " -> " +
+                                              std::to_string(n_out);
+                    }
+                }
+            }
         } else {
             native_mmvq(type, weights, x_q8_1, out, n_in, n_out, ncols, s);
         }
@@ -931,7 +961,10 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                 gdn_step_norm_multi(state, hb, (int) C, gate, beta, z_, (const float*) wnm->data, EPS, y_, (int) HK,
                                     (int) HV, te, self_commit ? one_ : nullptr, cs, tb, g_qfuse() ? (void*) xq_ : nullptr);
                 stamp(l, 6, grp);
-                if (!g_qfuse()) native_quantize_q8_1(y_ + (size_t) tb * ZV, xq_, (int) ZV, n, cs);   // HYPERCORE_QFUSE: done above
+                // HYPERCORE_QFUSE: with the fused step the kernel wrote xq_ itself (the last argument above), so the
+                // interleaved copy is stale either way.
+                il_ready = false;
+                if (!g_qfuse()) native_quantize_q8_1(y_ + (size_t) tb * ZV, xq_, (int) ZV, n, cs);
                 mmvq(wout->native_type, wout->native_data, xq_, bo_ + tb * N, (int) ZV, (int) N, n, cs);
             } else {
                 // ======================= QSA =======================
@@ -1125,7 +1158,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                         qsa_gate_apply_f32(attn_ + t * NH * HD, qfull_ + t * NH * 2 * HD, s, attn32_ + t * NH * HD, cs);
                 }
                 stamp(l, 14, grp);
-                native_quantize_q8_1(attn32_ + tb * NH * HD, xq_, (int) (NH * HD), n, cs);
+                native_quantize_q8_1(attn32_ + tb * NH * HD, xq_, (int) (NH * HD), n, cs); il_ready = false;
                 mmvq(wo->native_type, wo->native_data, xq_, bo_ + tb * N, (int) (NH * HD), (int) N, n, cs);
             }
         } catch (const std::exception& e) {
@@ -1465,7 +1498,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
         }
         if (head_ != nullptr && head_->loaded()) {
             try {
-                native_quantize_q8_1(head_mixed_, xq_, (int) N, T, cs);
+                native_quantize_q8_1(head_mixed_, xq_, (int) N, T, cs); il_ready = false;
                 mmvq(head_->type(), head_->weights(), xq_, head_logits_, (int) N, (int) n_vocab_, T, cs);
             } catch (const std::exception& e) {
                 err = std::string("verify head: ") + e.what();

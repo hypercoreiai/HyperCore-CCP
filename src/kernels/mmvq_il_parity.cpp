@@ -164,6 +164,38 @@ int run_case(const Case& c, bool bench, cudaStream_t s) {
                 cudaEventDestroy(e1);
             }
         }
+        // The stale-copy case verify.cpp's guard has to avoid: x_il still holds the interleaved columns of an
+        // earlier x_q8_1. Using it must not reproduce native_mmvq's output; rebuilding it must.
+        if (T >= 2 && native_mmvq_il_supported(c.type, T, c.n_out)) {
+            std::vector<uint32_t> a((std::size_t) T * c.n_out), b(a.size());
+            auto read_bits = [&](float* src, std::vector<uint32_t>& dst) {
+                ck(cudaMemcpy(dst.data(), src, ybytes, cudaMemcpyDeviceToHost), "read");
+            };
+            long long differ = 0;
+            std::vector<float> x2((std::size_t) T * c.n_in);
+            for (auto& v : x2) v = nd(rng);
+            if (!ck(cudaMemcpy(dx, x2.data(), x2.size() * 4, cudaMemcpyHostToDevice), "copy x2")) return 1;
+            quantize_q8_1_rows(dx, T, c.n_in, xq, s);
+            native_mmvq(c.type, dw[0], xq, yref, c.n_in, c.n_out, T, s);
+            native_mmvq_il(c.type, dw[0], xq, xil, yil, c.n_in, c.n_out, T, s);   // xil from the previous xq
+            ck(cudaStreamSynchronize(s), "stale");
+            read_bits(yref, a); read_bits(yil, b);
+            differ = 0; for (std::size_t i = 0; i < a.size(); ++i) if (a[i] != b[i]) ++differ;
+            if (differ == 0) {
+                ++bad;
+                std::printf("FAIL %-26s T=%d stale copy: a stale interleaved copy matched native_mmvq, "
+                           "so the guard is not exercising anything\n", c.name, T);
+            }
+            native_q8_1_interleave(xq, xil, c.n_in, T, s);   // what the guard does before every use
+            native_mmvq_il(c.type, dw[0], xq, xil, yil, c.n_in, c.n_out, T, s);
+            ck(cudaStreamSynchronize(s), "fresh");
+            read_bits(yref, a); read_bits(yil, b);
+            differ = 0; for (std::size_t i = 0; i < a.size(); ++i) if (a[i] != b[i]) ++differ;
+            if (differ != 0) {
+                ++bad;
+                std::printf("FAIL %-26s T=%d fresh copy: %lld bits differ after re-interleaving\n", c.name, T, differ);
+            }
+        }
         native_mmvq_il_tune(0);
         if (bench) {
             cudaEvent_t e0, e1;
