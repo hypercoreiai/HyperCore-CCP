@@ -82,8 +82,14 @@ only by naming it:
 - `HYPERCORE_ADAPT_OVERLAP=1`: the adaptive tier's copies land beside the window already in flight, holding a layer's
   plan back until that layer's bytes arrive.
 
-If the fragments follow the flags, the engine is the cause. If they appear with all three off, the model is being asked
-something the page injects rather than what you typed, and the fix is in the web app, not the engine.
+A reply that comes back with no text at all is usually the card running out of VRAM, not these switches. The engine
+says so in its own log: `WARNING: only N MiB of VRAM free at the start of this request` ([DETAILS.md](DETAILS.md#sharing-the-gpu-with-other-programs-optional)).
+Add `--vram-reserve-mib 1024` to the config's args, or lower `--max-context`.
+
+Measured on an RTX 4090 with 45 MiB free: `HYPERCORE_MMVQ_IL=1 HYPERCORE_MMVQ_IL_CHECK=1` returned an empty reply,
+`HYPERCORE_MMVQ_IL=1` alone answered but slowly, and `HYPERCORE_MMVQ_IL=0` answered normally. `MMVQ_IL_CHECK` runs
+every interleaved call through the plain kernel as well and compares it bit for bit, which halves dense throughput. It
+is a diagnostic for the guard, not a serving mode: leave it off unless you are measuring.
 
 **An earlier reply that came back empty is gone from the chat history (0.1.40, #843).**
 The server leaves out finished assistant turns that have no text, so the next reply does not copy the empty ones.

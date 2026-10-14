@@ -1,6 +1,6 @@
 # General knowledge outside the project
 
-Accumulated from 9 transcripts, 18 entries. Built 2026-10-13. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
+Accumulated from 9 transcripts, 18 entries. Built 2026-10-14. Newer chats append here; within a section the entries are grouped by the thing they are about, newest statement first.
 
 
 ## Current state

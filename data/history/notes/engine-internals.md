@@ -33,6 +33,11 @@ prefix does not make the rate look wrong.
 `src/core/verify.cpp:Verifier::mmvq_il_on`), `HYPERCORE_NAN_GUARD` (the per-window head-logits check,
 `src/core/verify.cpp:Verifier::nan_guard_on`) and `HYPERCORE_ADAPT_OVERLAP` (the adaptive tier's overlapping
 copies, `src/program/generate.cpp:adapt_overlap`) each add work to every decode window. They were on by default in
-0.1.42; on 2026-10-13 all three were flipped to opt-in after an install that ran slow and produced broken thinking
-blocks. The A/B that proves the link has not been run yet: the card was fully held by the other server, so the
-rebuilt engine was never started on a free GPU.
+0.1.42; on 2026-10-13 all three were flipped to opt-in.
+
+**The empty-response cause was VRAM, not the flags.** The A/B ran on 2026-10-14 on an RTX 4090 with 45 MiB free:
+`MMVQ_IL=1 MMVQ_IL_CHECK=1` returned no text, `MMVQ_IL=1` alone answered slowly, `MMVQ_IL=0` answered normally.
+`grep -c "MMVQ_IL CHECK FAILED" hypercore-q2_0.log` is 0, so the interleaved kernel matched the plain one bit for bit
+and the stale-copy guard is not what was producing the empty replies. `MMVQ_IL_CHECK` doubles the dense work by design
+(`verify.cpp:715`), and on a card already under its reserve that is the #2065 stall. The fix is `--vram-reserve-mib
+1024`, not the switches.
