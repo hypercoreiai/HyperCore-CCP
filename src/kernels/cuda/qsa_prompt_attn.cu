@@ -1475,7 +1475,9 @@ bool qsa_prompt_attn_batch(const float* q, const QsaAttnPools& pools, const int3
         }
         if (cc[dev] < 70) return false;
         volta = cc[dev] < 75;     // sm_70: the m8n8k4 kernel (HYPERCORE_PA_VOLTA); HYPERCORE_QSA_WARP=1 still forces the old one
-        turing = cc[dev] < 80;
+        // An sm_75-only build has no cp.async or m16n8k16 device code (both compile to a trap), so it runs
+        // the v1 kernel whatever the card reports: the card's capability is not the build's.
+        turing = cc[dev] < 80 || !hypercore::build_has_sm80();
     }
 #if defined(__HIPCC__)
     // the tensor-core kernels are compiled out on AMD (its major version is not a CUDA sm); RDNA4 has its own int8-KV

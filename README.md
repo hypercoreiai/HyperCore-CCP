@@ -32,6 +32,7 @@ you, hand it [docs/AI_SETUP.md](docs/AI_SETUP.md).
 | Technique | What it buys you | Detail |
 |---|---|---|
 | Expert cache on the GPU | MoE experts stay resident, so decode rarely leaves the card | [HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) |
+| Interleaved small-batch matvec | Dense projections in a 2-6 token window share one q8_1 copy (`HYPERCORE_MMVQ_IL=0` turns it off) | [MMVQ_IL_TABLE.md](docs/MMVQ_IL_TABLE.md) |
 | Layer split across GPUs | Two or three cards run contiguous layer ranges, each with its own expert cache | [MULTI_GPU.md](docs/MULTI_GPU.md) |
 | MTP / speculative decode | A draft layer proposes, the model verifies | [DETAILS.md](docs/DETAILS.md#speed-measured) |
 | KV prefetch and batching | Overlaps the CPU pool with the GPU launch | [KV_PREFETCH.md](docs/KV_PREFETCH.md), [BATCHING.md](docs/BATCHING.md) |
@@ -189,12 +190,30 @@ python3 serve/mcp/tests/run_all.py
 | `cmake/`, `CMakeLists.txt` | Build, including the HIP backend |
 | `data/` | Draft vocabularies and expert profiles the engine needs |
 
-Generated output is not in the repository: `build*/`, `engine/`, `dist/`, `.venv/`,
-model packs, logs, and agent session state. Rebuild with:
+Generated output is not in the repository: `build*/`, `debug_build/`, `engine/`, `dist/`, `.venv/`,
+model packs, logs, and agent session state. `./setup.sh` compiles a Release CUDA engine
+into `engine/` for the card it detected.
+
+The CPU tree the boundary gates use:
 
 ```sh
 cmake -B build -DHYPERCORE_ENABLE_CUDA=OFF && cmake --build build -j4
 ```
+
+Two CUDA trees, same sources, different optimisation. Replace `89` with the card (`86` Ampere, `89` Ada, `120` Blackwell). `./clean.sh` removes both.
+
+```sh
+# Production (Release). This is what setup.sh installs into engine/.
+cmake -B build-release -DCMAKE_BUILD_TYPE=Release -DHYPERCORE_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=89
+cmake --build build-release --target hypercore -j$(nproc)
+cp -a build-release/hypercore engine/hypercore
+
+# Experimentation (Debug). Symbols, no -O3; not for serving.
+cmake -B debug_build -DCMAKE_BUILD_TYPE=Debug -DHYPERCORE_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=89
+cmake --build debug_build --target hypercore -j$(nproc)
+```
+
+Run the production binary as `./engine/hypercore ...` or through the server. Run an experiment as `./debug_build/hypercore ...`, or `EXE=./debug_build/hypercore ./debug_mmvq_il.sh`.
 
 ## History
 

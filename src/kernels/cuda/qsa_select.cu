@@ -1071,6 +1071,7 @@ bool qsa_block_scores_tc(const float* pooled, const float* dead, const float* q_
     }
 #else
     {   // sm_80 or newer (TF32 MMA); an older card keeps the warp kernel
+        if (!hypercore::build_has_sm80()) return false;   // this build has no sm_80 device code: the MMA is a trap there
         static int cc_major[64] = {};
         int dev = 0;
         if (cudaGetDevice(&dev) != cudaSuccess || dev < 0 || dev >= 64) { cudaGetLastError(); return false; }

@@ -362,6 +362,116 @@ int run_sequence(cudaStream_t s) {
     return bad;
 }
 
+// run_graph: the engine's own shape of work.  A verify window is a captured CUDA graph (src/core/graph.cpp):
+// the guard's build/reuse decision is recorded once, at capture, and every replay runs exactly the launches it
+// recorded.  A copy the graph never rebuilds is the one that multiplies this window's weights against an
+// earlier window's activations.  run_sequence walks a window's call order launch by launch; this walks the
+// same order through a real capture and replays it three times with different data - the one thing the
+// host-side guard test cannot see.
+int run_graph(cudaStream_t s) {
+    const int type = 12, n_in = 2560, n_out = 2560, T = 2;   // a shape the interleaved kernel really runs (the
+    // output projection's), and small enough to run while the engine holds the card
+    if (!native_mmvq_il_supported(type, T, n_out)) {
+        std::printf("FAIL graph: (type %d, %d columns, %d rows) is not an interleaved shape on this card, "
+                    "so the capture below would prove nothing\n", type, T, n_out);
+        return 1;
+    }
+    const std::size_t wbytes = native_mmvq_weight_bytes(type, n_in, n_out);
+    const std::size_t obytes = (std::size_t) T * n_out * 4;
+    std::mt19937 rng(4242u);
+    std::normal_distribution<float> nd(0.f, 1.f);
+    std::vector<uint8_t> w(wbytes);
+    for (auto& b : w) b = (uint8_t) (rng() & 0xffu);
+    for (std::size_t k = 0; k < (std::size_t) n_out * (n_in / 256); ++k) {   // sane scales, as in run_case
+        const uint16_t h = sane_half(rng);
+        std::memcpy(&w[k * 144], &h, 2);
+        std::memcpy(&w[k * 144 + 2], &h, 2);
+    }
+    void *dw = nullptr, *xq = nullptr, *xq1 = nullptr, *xil = nullptr;
+    float *dx1 = nullptr, *dx2 = nullptr, *ya = nullptr, *yb = nullptr, *yc = nullptr, *r1 = nullptr, *r2 = nullptr;
+    if (!ck(cudaMalloc(&dw, wbytes), "malloc w") ||
+        !ck(cudaMalloc(&xq, native_q8_1_bytes(n_in, T)), "malloc xq") ||
+        !ck(cudaMalloc(&xq1, native_q8_1_bytes(n_in, T)), "malloc xq1") ||
+        !ck(cudaMalloc(&xil, native_q8_1_il_bytes(n_in, T)), "malloc xil") ||
+        !ck(cudaMalloc(&dx1, (std::size_t) T * n_in * 4), "malloc dx1") ||
+        !ck(cudaMalloc(&dx2, (std::size_t) T * n_in * 4), "malloc dx2") ||
+        !ck(cudaMalloc(&ya, obytes), "malloc ya") || !ck(cudaMalloc(&yb, obytes), "malloc yb") ||
+        !ck(cudaMalloc(&yc, obytes), "malloc yc") || !ck(cudaMalloc(&r1, obytes), "malloc r1") ||
+        !ck(cudaMalloc(&r2, obytes), "malloc r2")) return 1;
+    ck(cudaMemcpy(dw, w.data(), wbytes, cudaMemcpyHostToDevice), "copy w");
+
+    int bad = 0;
+    const char* arm[3] = {"the guard as record_window uses it", "HYPERCORE_MMVQ_IL_REUSE=0",
+                          "a write to xq_ that missed invalidate()"};
+    for (int a = 0; a < 3; ++a) {
+        Q81IlCopy guard;
+        guard.init(xil, n_in, T);
+        guard.set_reuse(a != 1);
+        cudaGraph_t g = nullptr;
+        cudaGraphExec_t ge = nullptr;
+        cudaStream_t cap = nullptr;
+        if (!ck(cudaStreamCreate(&cap), "capture stream")) return 1;
+        if (!ck(cudaStreamBeginCapture(cap, cudaStreamCaptureModeThreadLocal), "begin capture")) return 1;
+        native_quantize_q8_1(dx1, xq, n_in, T, cap);                                   // the layer's activations
+        guard.invalidate();
+        native_mmvq_il(type, dw, xq, guard.read(xq, n_in, T, cap), ya, n_in, n_out, T, cap);   // qkv
+        native_mmvq_il(type, dw, xq, guard.read(xq, n_in, T, cap), yb, n_in, n_out, T, cap);   // the gate: same shape, a legal reuse
+        native_quantize_q8_1(dx2, xq, n_in, T, cap);                                   // the next layer, same columns
+        if (a != 2) guard.invalidate();
+        native_mmvq_il(type, dw, xq, guard.read(xq, n_in, T, cap), yc, n_in, n_out, T, cap);   // the out projection
+        if (!ck(cudaStreamEndCapture(cap, &g), "end capture")) return 1;
+        if (g == nullptr) { bad++; std::printf("FAIL graph %s: the capture recorded nothing\n", arm[a]); continue; }
+        if (!ck(cudaGraphInstantiate(&ge, g, nullptr, nullptr, 0), "instantiate")) return 1;
+        ck(cudaGraphDestroy(g), "destroy graph");
+        ck(cudaStreamDestroy(cap), "destroy capture stream");
+
+        long long diff = 0, calls = 0;
+        for (int replay = 0; replay < 3; ++replay) {
+            std::vector<float> x1((std::size_t) T * n_in), x2((std::size_t) T * n_in);
+            for (auto& v : x1) v = nd(rng);
+            for (auto& v : x2) v = nd(rng);
+            ck(cudaMemcpy(dx1, x1.data(), x1.size() * 4, cudaMemcpyHostToDevice), "copy x1");
+            ck(cudaMemcpy(dx2, x2.data(), x2.size() * 4, cudaMemcpyHostToDevice), "copy x2");
+            if (!ck(cudaGraphLaunch(ge, s), "graph launch")) return 1;
+            ck(cudaStreamSynchronize(s), "graph");
+            // the plain path, on the very activations the replayed graph wrote
+            native_quantize_q8_1(dx1, xq1, n_in, T, s);
+            native_mmvq(type, dw, xq1, r1, n_in, n_out, T, s);
+            native_mmvq(type, dw, xq, r2, n_in, n_out, T, s);
+            ck(cudaStreamSynchronize(s), "ref");
+            std::vector<uint32_t> o1(obytes / 4), o2(o1.size()), o3(o1.size()), p1(o1.size()), p2(o1.size());
+            ck(cudaMemcpy(o1.data(), ya, obytes, cudaMemcpyDeviceToHost), "read ya");
+            ck(cudaMemcpy(o2.data(), yb, obytes, cudaMemcpyDeviceToHost), "read yb");
+            ck(cudaMemcpy(o3.data(), yc, obytes, cudaMemcpyDeviceToHost), "read yc");
+            ck(cudaMemcpy(p1.data(), r1, obytes, cudaMemcpyDeviceToHost), "read r1");
+            ck(cudaMemcpy(p2.data(), r2, obytes, cudaMemcpyDeviceToHost), "read r2");
+            for (size_t i = 0; i < o1.size(); ++i) {
+                if (o1[i] != p1[i]) ++diff;   // qkv, the first read of the copy
+                if (o2[i] != p1[i]) ++diff;   // the gate, the reuse
+                if (o3[i] != p2[i]) ++diff;   // the out projection, after the write
+            }
+            calls += 3;
+        }
+        if (diff)
+            ++bad,
+            std::printf("FAIL graph %s: %lld of %lld values differ from native_mmvq across 3 replays "
+                        "(%lld copies built, %lld reused)\n", arm[a], diff, calls * (long long) (obytes / 4),
+                        (long long) guard.builds(), (long long) guard.uses());
+        else
+            std::printf("graph %s: 3 replays, %lld interleaved calls (%lld built, %lld reused), all outputs bitwise\n",
+                        arm[a], calls, (long long) guard.builds(), (long long) guard.uses());
+        if (a == 2 && diff == 0) {
+            ++bad;
+            std::printf("FAIL graph: the arm whose write missed invalidate() still matched - this test cannot "
+                        "see a stale copy, so a pass here proves nothing\n");
+        }
+        ck(cudaGraphExecDestroy(ge), "destroy exec");
+    }
+    cudaFree(dw); cudaFree(xq); cudaFree(xq1); cudaFree(xil); cudaFree(dx1); cudaFree(dx2);
+    cudaFree(ya); cudaFree(yb); cudaFree(yc); cudaFree(r1); cudaFree(r2);
+    return bad;
+}
+
 // the per-architecture lookup, no GPU needed for its answers
 int check_tables() {
     int bad = 0;
@@ -566,6 +676,7 @@ int main(int argc, char** argv) {
         if (only == nullptr || std::strstr(c.name, only) != nullptr) bad += run_case(c, bench, s);
     if (emit) emit_table();
     bad += run_sequence(s);   // the window's call order through the copy guard, always
-    std::printf("%s\n", bad ? "mmvq_il_parity: FAIL" : "mmvq_il_parity: OK (every case, T 1-4, rows 1/2/4 and the table, bitwise)");
+    bad += run_graph(s);      // the same order through a real graph capture, replayed
+    std::printf("%s\n", bad ? "mmvq_il_parity: FAIL" : "mmvq_il_parity: OK (every case, T 1-4, rows 1/2/4 and the table, bitwise, and the captured window replays bitwise)");
     return bad ? 1 : 0;
 }

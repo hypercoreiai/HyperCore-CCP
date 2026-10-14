@@ -439,7 +439,7 @@ private:
     uint32_t* h_nf_ = nullptr;   uint32_t* m_nf_ = nullptr;     // #879: kVerifyMaxT * kNonfiniteBlocks flags
     uint8_t* xil_ = nullptr;                                    // HYPERCORE_MMVQ_IL: the interleaved copy of xq_'s columns
     hypercore::kernels::Q81IlCopy il_copy_;                     // its shape and validity; see q8_1_il_copy.hpp
-    static bool mmvq_il_on();                                   ///< HYPERCORE_MMVQ_IL=0 keeps native_mmvq's multi-column kernels
+    static bool mmvq_il_on();                                   ///< on unless HYPERCORE_MMVQ_IL=0; Q81IlCopy owns the copy
     static bool il_check_on();                                  // HYPERCORE_MMVQ_IL_CHECK=1: compare every IL call on the device
     int32_t* il_stat_ = nullptr;                                // per site: values differing, calls differing, calls compared
     float* il_check_out_ = nullptr;                             // native_mmvq's side of that comparison, on the device

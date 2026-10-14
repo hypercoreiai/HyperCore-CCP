@@ -87,7 +87,7 @@ tiers=""
 
 # 1. the build trees and the caches they leave behind
 if [ "$WANT_BUILD" -eq 1 ] || [ "$WANT_ALL" -eq 1 ]; then
-  for d in "$ROOT"/build*/; do
+  for d in "$ROOT"/build*/ "$ROOT"/debug_build/; do
     [ -d "$d" ] || continue
     add_target "${d%/}"
   done

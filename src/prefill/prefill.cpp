@@ -89,6 +89,31 @@ void experts_native(const Batch&, const NativeGeom&, int, int64_t, const void*, 
 namespace hypercore::prefill {
 namespace {
 
+// A CUDA error is sticky: it is reported by the next API call, not by the kernel that caused it.  The prompt path
+// checks some launches (route, swiglu_pair) and not others, so a fault raised at the first checked call after an
+// unchecked one blames the wrong kernel.  pf_check closes that gap at the shared-expert gemms, which sit between
+// check("swiglu_pair") and check("copy_i32").
+inline void pf_check(const char* what) {
+    const cudaError_t e = cudaGetLastError();
+    if (e != cudaSuccess) {
+        std::fprintf(stderr, "prefill %s: %s\n", what, cudaGetErrorString(e));
+        std::fflush(stderr);
+        std::exit(1);
+    }
+}
+// HYPERCORE_PF_SYNC_CHECK=1: wait for the work already issued on `s` and name the point where the fault first
+// shows up.  A kernel fault is asynchronous: the API call that reports it is the next one made, not the launch.
+inline void pf_sync_check(cudaStream_t s, const char* where) {
+    static const bool on = std::getenv("HYPERCORE_PF_SYNC_CHECK") != nullptr;
+    if (!on) return;
+    const cudaError_t e = cudaStreamSynchronize(s);
+    if (e != cudaSuccess) {
+        std::fprintf(stderr, "prefill: fault seen at %s: %s\n", where, cudaGetErrorString(e));
+        std::fflush(stderr);
+        std::exit(1);
+    }
+}
+
 using Clock = std::chrono::steady_clock;
 constexpr float EPS = 1e-6f;
 constexpr int64_t N = 2560, HC = 4, D = N * HC, LR = 320, K = 10, NE = 512;
@@ -1608,11 +1633,26 @@ const char* const kPfNames[kPfCount] = {"embed+steps", "hc read", "gdn", "qsa pr
                                         "gdn recurrence", "gdn out proj"};
 struct PfTimer {
     bool on = std::getenv("HYPERCORE_PREFILL_TIMING") != nullptr;
+    // HYPERCORE_PF_SYNC_CHECK=1: synchronise the compute stream at every phase boundary and name the phase
+    // whose kernel faulted.  A kernel fault is asynchronous and sticky: without a sync the first call that
+    // notices it is whichever checked call comes next, and that call is blamed for a kernel it did not run.
+    bool sync_check = std::getenv("HYPERCORE_PF_SYNC_CHECK") != nullptr;
     std::vector<cudaEvent_t> ev;
     std::vector<int> ph;
     size_t used = 0;
     double ms[kPfCount] = {};
     void mark(int phase, cudaStream_t s) {
+        if (sync_check) {
+            const cudaError_t e = cudaStreamSynchronize(s);
+            if (e != cudaSuccess) {
+                std::fprintf(stderr, "prefill: fault %s: %s\n",
+                            (used ? "after " + std::string(kPfNames[ph[used - 1]])
+                                  : "before the prompt path's first kernel (setup or the previous request)").c_str(),
+                            cudaGetErrorString(e));
+                std::fflush(stderr);
+                std::exit(1);
+            }
+        }
         if (!on) return;
         if (used == ev.size()) {
             cudaEvent_t e = nullptr;
@@ -1686,6 +1726,7 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
     err.clear();
     Impl& m = *impl_;
     const core::OnDevice on_device(m.device);
+    pf_sync_check(m.cs, "before the prompt path starts");
     const core::ModelGeometry& g = *m.g;
     core::SessionState& ss = *m.ss;
     const auto t_start = Clock::now();
@@ -1743,7 +1784,7 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
     const cudaStream_t cs = (cudaStream_t) m.cs;
     // the MMQ row table lives in the borrowed cache slots, which the refill after a prompt overwrites with experts:
     // write it again for every prompt (a layout is reused as long as the chunk and the slots are the same)
-    if (m.ids_identity != nullptr) mmq::iota(m.ids_identity, m.T * K, m.cs);
+    if (m.ids_identity != nullptr) { mmq::iota(m.ids_identity, m.T * K, m.cs); pf_check("iota"); }
     // The PLE rows of a chunk are read from the model file on the host (an SSD read per missed row): the chunk
     // after this one is read on a thread while the GPU runs this one, into the other of two buffers.  The rows
     // depend only on the tokens (the two before a position name its n-grams), so this is the same data.
@@ -1853,7 +1894,7 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
                 ++t;
             }
         }
-        if (hand_in_ == nullptr) gr_broadcast(m.emb, m.R, T, m.cs);
+        if (hand_in_ == nullptr) { gr_broadcast(m.emb, m.R, T, m.cs); pf_check("gr_broadcast"); }
         // ---- the PLE rows of the whole chunk, one batched SSD request on a thread (see ple_gather).  A later chunk's
         // were read ahead during the previous chunk; the first chunk's are read beside layer 0 - they are needed from
         // layer 1 on, and gathering them here first left the GPU idle for the whole read (~0.4 s of a 32K prompt)
@@ -1892,6 +1933,7 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
             }
             ple_buf ^= 1;
             stats_.ms_ple += ms_since(tp);
+            pf_check("ple_upload");
             return true;
         };
         for (int64_t t = 0; t < T; ++t) { prev[0] = prev[1]; prev[1] = (int32_t) tokens[c0 + t]; }
@@ -1899,6 +1941,7 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
         for (int64_t t = 0; t < T; ++t) hypercore::kernels::qsa_step_fill(m.steps_host.data() + t * hypercore::kernels::kStepCount, p0 + t, s);
         cudaMemcpyAsync(m.steps_dev, m.steps_host.data(), (size_t) T * hypercore::kernels::kStepCount * 4,
                         cudaMemcpyHostToDevice, m.cs);
+        pf_check("steps_upload");
 
         int64_t qsa_index = 0, gdn_index = 0;
         for (int64_t l = 0; l < LB; ++l) (core::is_qsa_layer(g, l) ? qsa_index : gdn_index) += 1;
@@ -2522,9 +2565,12 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
                     if (!native_proj(m.gemm, wsu, m.mixed_h, m.sup, T, v.name("ffn_up_shexp.weight"), err)) return false;
                     swiglu_pair(m.sgate, m.sup, m.sh_h, T, m.cs);
                     if (!native_proj(m.gemm, wsd, m.sh_h, m.shared, T, v.name("ffn_down_shexp.weight"), err)) return false;
+                    pf_check("shared_expert_down");   // the two shared-expert gemms are the only launches between
                     if (wgi->kind != core::WeightKind::Bf16InF32) { err = "prefill: shared gate is not BF16"; return false; }
                     m.gemm.bf16(m.mixed_bf, (const uint16_t*) wgi->data, m.sg, T, 1, N);
                     if (m.mixed_bf_lo) m.gemm.bf16(m.mixed_bf_lo, (const uint16_t*) wgi->data, m.sg, T, 1, N, 0, 1.0f);
+                    pf_check("shared_expert_gate");   // check("route") and check("swiglu_pair") pass, and copy_i32 is
+                                                      // the next checked call: a fault reported there is one of these two.
                     // #136: HYPERCORE_PF_FUSED=1 - the Q2_0 pack's experts on the fused int8 kernels (moe_fused.hpp),
                     // grouped on the GPU: no host sync.  Only where every expert's place is known before the routing -
                     // the streamed walk, in which every non-resident expert of the layer comes through the ring in id

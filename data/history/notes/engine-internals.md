@@ -29,11 +29,11 @@ prompt; `decode_ms` is the emit window. The Monitor's prefill card is computed f
 from `prompt_read` - the tokens actually read - not from the whole prompt, so a cached 88k-token
 prefix does not make the rate look wrong.
 
-**Three 0.1.42 features are off by default.** `HYPERCORE_MMVQ_IL` (the interleaved small-batch matvec,
-`src/core/verify.cpp:Verifier::mmvq_il_on`), `HYPERCORE_NAN_GUARD` (the per-window head-logits check,
-`src/core/verify.cpp:Verifier::nan_guard_on`) and `HYPERCORE_ADAPT_OVERLAP` (the adaptive tier's overlapping
-copies, `src/program/generate.cpp:adapt_overlap`) each add work to every decode window. They were on by default in
-0.1.42; on 2026-10-13 all three were flipped to opt-in.
+**The 0.1.42 decode path.** `HYPERCORE_MMVQ_IL` (the interleaved small-batch matvec) and `HYPERCORE_NAN_GUARD`
+(the per-window head-logits check) are on unless set to `0`. `HYPERCORE_ADAPT_OVERLAP` stays off unless set to `1`.
+A reused interleaved copy is only valid for the `(n_in, ncols)` it was built for; `Q81IlCopy` rebuilds it on a
+shape change and on every write to the activations. `HYPERCORE_MMVQ_IL_CHECK` is a diagnostic: it doubles dense
+work and is not a serving mode.
 
 **The empty-response cause was VRAM, not the flags.** The A/B ran on 2026-10-14 on an RTX 4090 with 45 MiB free:
 `MMVQ_IL=1 MMVQ_IL_CHECK=1` returned no text, `MMVQ_IL=1` alone answered slowly, `MMVQ_IL=0` answered normally.

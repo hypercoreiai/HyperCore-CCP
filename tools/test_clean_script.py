@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "clean.sh"
 
-GENERATED = ("build", "build-shared", "build-cuda")
+GENERATED = ("build", "build-shared", "build-cuda", "debug_build")
 KEEP = ("engine", "third_party", "data", "bench", "serve", "src", "tools", "docs")
 
 

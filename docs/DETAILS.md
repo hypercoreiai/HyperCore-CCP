@@ -232,7 +232,7 @@ RTX 5070, against ~3 tokens/s before these changes.
   `HYPERCORE_KEEP_EMPTY_TURNS=1` and `HYPERCORE_TOPK_STREAM=0` in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 **Switches added in 0.1.42 (ported from Strata 0.1.43; off unless noted):**
-- `HYPERCORE_MMVQ_IL=1`: a window's dense projections (1-6 columns at a time) read an interleaved copy of its
+- `HYPERCORE_MMVQ_IL` (on unless `=0`): a window's dense projections (1-6 columns at a time) read an interleaved copy of its
   Q8_1 activations (`native_mmvq_il`) instead of `native_mmvq`'s kernels. The interleaved copy is written for the
   2-4 column calls; the single-column ones use their own row forms, off with `HYPERCORE_MMVQ_IL_T1=0`, and Q3_K
   keeps `native_mmvq`'s kernels with `HYPERCORE_MMVQ_IL_Q3K=0`. It runs on sm_80 and newer
@@ -243,7 +243,7 @@ RTX 5070, against ~3 tokens/s before these changes.
   `HYPERCORE_MMVQ_IL_WIDE=1` (on by default, `0` off) covers the 5 and 6 column windows a `--spec 4` verify stage with
   an MTP draft head is: the same interleaved copy, a kernel instantiated for those widths at two rows a warp. A width
   the row table does not cover for its type falls back to `native_mmvq`, and 7 and 8 columns always do.
-- `HYPERCORE_NAN_GUARD=1` (#879): every window graph checks its own head logits for a NaN or an infinity on the
+- `HYPERCORE_NAN_GUARD` (on unless `=0`, #879): every window graph checks its own head logits for a NaN or an infinity on the
   device beside the greedy pick. When a window meets one its tokens are not emitted, the request ends with
   `DONE ... nonfinite`, the state that window wrote is dropped and the next request reads its prompt from token 0.
   `HYPERCORE_NAN_INJECT=3,7` (debug) makes the guard report the windows it is given, so the recovery path can be

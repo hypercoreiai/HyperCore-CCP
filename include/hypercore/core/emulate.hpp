@@ -5,9 +5,17 @@
 // device must agree with that, or it picks paths and shared-memory sizes the device code was not built for:
 // HYPERCORE_EMULATE_CC=75|80|86|89 makes each such query (compute capability, shared memory per block) answer as that
 // card would.  Speed under it says nothing about the real card; results do - the kernels are the real card's.
+//
+// The other half of the same rule: a build that targets only sm_75 has no sm_80 device code at all, so every
+// `__CUDA_ARCH__ >= 800` path in it compiles to `__trap()`.  CMake records what the build contains in
+// HYPERCORE_BUILD_SM80; a host decision taken from the real card must not pick one of those paths.
 #pragma once
 
 #include <cstdlib>
+
+#ifndef HYPERCORE_BUILD_SM80
+#define HYPERCORE_BUILD_SM80 0   // set by CMake from CMAKE_CUDA_ARCHITECTURES; 0 for a non-CUDA build
+#endif
 
 namespace hypercore {
 
@@ -21,6 +29,8 @@ inline int emulated_cc() {
     return cc;
 }
 inline int cc_major_of(int real_major) { return emulated_cc() ? emulated_cc() / 10 : real_major; }
+/// whether this build contains sm_80 device code (tensor-core paths); false for an sm_75-only build
+inline bool build_has_sm80() { return HYPERCORE_BUILD_SM80 != 0; }
 inline int cc_minor_of(int real_minor) { return emulated_cc() ? emulated_cc() % 10 : real_minor; }
 /// cudaDevAttrMaxSharedMemoryPerBlockOptin as the emulated card reports it: 64 KB on Turing, 163 KB on the A100,
 /// 99 KB on the other Ampere and Ada cards

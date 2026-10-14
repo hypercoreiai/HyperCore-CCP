@@ -1,8 +1,7 @@
 # The interleaved small-batch matvec (HYPERCORE_MMVQ_IL): how to measure a table for your card
 
 The decode and verify windows can run their dense projections (2 to 4 tokens at a time) through `native_mmvq_il`, which
-reads an interleaved copy of the q8_1 activations. The path is off by default since 0.1.42; `HYPERCORE_MMVQ_IL=1` turns
-it on. Every choice it makes gives the same bits as the plain kernels; only the speed differs. How many matrix rows one warp takes
+reads an interleaved copy of the q8_1 activations. The path is on unless `HYPERCORE_MMVQ_IL=0`. Every choice it makes gives the same bits as the plain kernels; only the speed differs. How many matrix rows one warp takes
 (1, 2 or 4, or 0 = use the plain kernel) is a table in `src/kernels/cuda/native_mmvq.cu`, indexed by the
 quantisation type (IQ4_XS, Q4_K, Q5_K, Q6_K, and Q3_K where measured), the token count (2-4) and the matrix's row count
 (five classes).

@@ -224,6 +224,23 @@ elseif(HYPERCORE_ENABLE_CUDA)
     # build only, so the ready-made engine (sm_75+) keeps exactly the code it had
     add_compile_definitions(HYPERCORE_EXPERIMENTAL_SM60=1)
   endif()
+  # What the device code can run is decided by __CUDA_ARCH__ at compile time; a host decision taken from the
+  # real card has to agree with it (include/hypercore/core/emulate.hpp).  Record the build's capability here.
+  set(_hypercore_sm80 OFF)
+  foreach(_a IN LISTS CMAKE_CUDA_ARCHITECTURES)
+    string(REGEX REPLACE "-.*$" "" _base "${_a}")
+    if(_base STREQUAL "native" OR _base STREQUAL "all" OR _base STREQUAL "all-major" OR _base GREATER_EQUAL 80)
+      set(_hypercore_sm80 ON)
+    endif()
+  endforeach()
+  if(_hypercore_sm80)
+    add_compile_definitions(HYPERCORE_BUILD_SM80=1)
+  else()
+    add_compile_definitions(HYPERCORE_BUILD_SM80=0)
+    message(WARNING "HyperCore: this build has no sm_80 device code (CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}): "
+                    "the tensor-core paths compile to a trap and the engine will not take them. "
+                    "Build for the card (e.g. -DCMAKE_CUDA_ARCHITECTURES=89) for the full path.")
+  endif()
   message(STATUS "HyperCore: CUDA enabled, arch ${CMAKE_CUDA_ARCHITECTURES}")
   set(_hypercore_gpu_runtime_target CUDA::cudart)
   set(_hypercore_gpu_blas_target CUDA::cublas)

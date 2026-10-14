@@ -71,17 +71,16 @@ The monitor plugged into the graphics card and other GPU programs take VRAM from
 its rated speed (enable EXPO/XMP in the BIOS) slows the CPU half.
 
 **Answers come out in fragments, or a reply stops mid-sentence (0.1.42).**
-Three features added in 0.1.42 put extra work into every decode window. All three are off by default; each is turned on
-only by naming it:
+The interleaved matvec and the NaN guard are on unless turned off. The overlap gate stays off unless named:
 
-- `HYPERCORE_MMVQ_IL=1`: the interleaved copy of the q8_1 activations for the 2-6 column dense projections
-  ([MMVQ_IL_TABLE.md](MMVQ_IL_TABLE.md)). `HYPERCORE_MMVQ_IL_WIDE=0` puts the 5 and 6 column windows of a
+- `HYPERCORE_MMVQ_IL=0`: leave the dense projections on `native_mmvq`. On, they read an interleaved copy of the q8_1
+  activations ([MMVQ_IL_TABLE.md](MMVQ_IL_TABLE.md)). `HYPERCORE_MMVQ_IL_WIDE=0` puts the 5 and 6 column windows of a
   `--spec 4` + MTP run back on `native_mmvq`'s kernels.
-- `HYPERCORE_NAN_GUARD=1` (#879): every window graph checks its own head logits for a NaN or an infinity beside the
-  greedy pick. A window that meets one emits no tokens, the request ends with `DONE ... nonfinite`, its state is
-  dropped and the next request reads the prompt from token 0, which is what a truncated answer looks like.
+- `HYPERCORE_NAN_GUARD=0` (#879): skip the per-window head-logits check. On, a window whose logits are NaN or infinite
+  emits no tokens, the request ends with `DONE ... nonfinite`, its state is dropped and the next request reads the
+  prompt from token 0, which is what a truncated answer looks like.
 - `HYPERCORE_ADAPT_OVERLAP=1`: the adaptive tier's copies land beside the window already in flight, holding a layer's
-  plan back until that layer's bytes arrive.
+  plan back until that layer's bytes arrive. Off unless set.
 
 A reply that comes back with no text at all is usually the card running out of VRAM, not these switches. The engine
 says so in its own log: `WARNING: only N MiB of VRAM free at the start of this request` ([DETAILS.md](DETAILS.md#sharing-the-gpu-with-other-programs-optional)).
