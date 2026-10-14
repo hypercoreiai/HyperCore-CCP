@@ -10470,19 +10470,21 @@ int main(int argc, char** argv) {
             // means the shapes alternate and nothing is ever reused.  With HYPERCORE_MMVQ_IL_CHECK=1 every such call
             // is also run through native_mmvq and compared, so a wrong copy is named here instead of showing up as
             // garbled text.
-            long long il_b = 0, il_u = 0, il_mc = 0, il_mv = 0; std::string il_first;
+            long long il_b = 0, il_u = 0, il_mc = 0, il_mv = 0, il_ck = 0; std::string il_detail;
             for (int st = 0; st < n_stages; ++st) {
                 const hypercore::core::Verifier& v = stage_ver(st);
-                il_b += v.il_builds; il_u += v.il_uses; il_mc += v.il_mismatch_calls; il_mv += v.il_mismatch_values;
-                if (il_first.empty()) il_first = v.il_first_mismatch;
+                il_b += v.il_builds; il_u += v.il_uses; il_ck += v.il_checked_calls;
+                il_detail += v.il_check_report();   // empty unless HYPERCORE_MMVQ_IL_CHECK is on and a call differs
+                il_mc += v.il_mismatch_calls; il_mv += v.il_mismatch_values;
             }
             if (il_mc)
                 std::fprintf(stderr, "hypercore serve: MMVQ_IL CHECK FAILED: %lld of %lld interleaved calls differ "
-                                     "from native_mmvq (%lld values), first %s\n",
-                             il_mc, il_b + il_u, il_mv, il_first.empty() ? "(unknown)" : il_first.c_str());
+                                     "from native_mmvq (%lld values):\n%s",
+                             il_mc, il_b + il_u, il_mv, il_detail.c_str());
             else if (il_b + il_u)
                 std::fprintf(stderr, "hypercore serve: interleaved matvec: %lld copies built, %lld calls reused one "
-                                     "(%lld calls)\n", il_b, il_u, il_b + il_u);
+                                     "(%lld calls)%s\n", il_b, il_u, il_b + il_u,
+                             il_ck ? " - compared with native_mmvq, all equal" : "");
             // HYPERCORE_SPLIT_TIMING: where each verify stage's host time went, cumulative per window since the start
             // (waiting for its GPU to ring a layer, the CPU pool and plan per layer, staging the window)
             if (static const bool st_timing = std::getenv("HYPERCORE_SPLIT_TIMING") != nullptr; st_timing)
@@ -11319,6 +11321,27 @@ int main(int argc, char** argv) {
                         ver.ms_commit / rounds,
                         (double) (drive.d.multi_misses - misses0) / (double) (rounds * g.n_layers),
                         (double) (drive.d.multi_entries - entries0) / (double) (rounds * g.n_layers));
+        // HYPERCORE_MMVQ_IL in generate mode: the report the serve loop prints, so a run that garbles names the
+        // shape whose interleaved copy differs from native_mmvq instead of just garbling.  With
+        // HYPERCORE_MMVQ_IL_CHECK=1 every interleaved call is also run through native_mmvq on the device; without
+        // it this line only says how many copies were built and how often they were reused.
+        {
+            long long il_b = 0, il_u = 0, il_mc = 0, il_mv = 0, il_ck = 0;
+            std::string il_detail;
+            auto il_add = [&](const hypercore::core::Verifier& v) {
+                il_b += v.il_builds; il_u += v.il_uses; il_ck += v.il_checked_calls;
+                il_detail += v.il_check_report();
+                il_mc += v.il_mismatch_calls; il_mv += v.il_mismatch_values;
+            };
+            il_add(ver);
+            for (auto& st : stages) il_add(st->ver);
+            if (il_mc)
+                std::printf("%-24s CHECK FAILED: %lld of %lld interleaved calls differ from native_mmvq (%lld values)\n%s",
+                            "interleaved matvec", il_mc, il_b + il_u, il_mv, il_detail.c_str());
+            else if (il_b + il_u)
+                std::printf("%-24s %lld copies built, %lld calls reused one (%lld calls)%s\n", "interleaved matvec",
+                            il_b, il_u, il_b + il_u, il_ck ? " - compared with native_mmvq, all equal" : "");
+        }
         if (rounds > 0)
             std::printf("%-24s gate/up %.3f  quantize %.3f  down %.3f ms/round; %.1f GB/s over the rows phases; "
                         "CPU pool call %.3f ms/round\n", "pool multi", pool.ms_multi_gu / rounds,

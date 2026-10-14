@@ -1,4 +1,4 @@
-// src/kernels/mmvq_il_parity.cpp - native_mmvq_il (2-4 columns from the interleaved q8_1 copy, fork F4) against
+// src/kernels/mmvq_il_parity.cpp - native_mmvq_il (2-6 columns from the interleaved q8_1 copy, fork F4) against
 // native_mmvq's multi-column kernels, bitwise, for every rows-a-warp choice; --bench times both per call.
 //
 //     build/mmvq_il_parity [--bench [--emit-table]]
@@ -11,6 +11,7 @@
 // produced it). The bench cycles through enough copies of the weights to miss the L2 cache, as a layer's call does.
 #include "hypercore/kernels/iq_kernels.hpp"
 #include "hypercore/kernels/native_mmvq.hpp"
+#include "hypercore/kernels/q8_1_il_copy.hpp"
 
 #include <cuda_runtime.h>
 
@@ -105,7 +106,7 @@ int run_case(const Case& c, bool bench, cudaStream_t s) {
             return 1;
     }
     int bad = 0;
-    for (int T = 1; T <= 4; ++T) {
+    for (int T = 1; T <= 6; ++T) {   // 5 and 6 are the --spec 4 + MTP window widths (HYPERCORE_MMVQ_IL_WIDE)
         std::vector<float> x((std::size_t) T * c.n_in);
         std::normal_distribution<float> nd(0.f, 1.f);
         for (auto& v : x) v = nd(rng);
@@ -146,7 +147,8 @@ int run_case(const Case& c, bool bench, cudaStream_t s) {
                 std::printf("FAIL %-26s T=%d rows=%d: %lld bits differ, %lld non-finite of %zu\n", c.name, T, r, diff, nonfinite, a.size());
             }
             (void) used;
-            if (bench && r != 0) {
+            // A wide window has one kernel (two rows a warp), so there is nothing to search or time per row count.
+            if (bench && r != 0 && T <= 4) {
                 cudaEvent_t e0, e1;
                 cudaEventCreate(&e0);
                 cudaEventCreate(&e1);
@@ -276,6 +278,90 @@ void emit_table() {
     }
 }
 
+// --sequence: the verify window's own call order through Q81IlCopy.  A layer writes x_q8_1, reads it
+// twice with the same shape (qkv then the gate), then re-quantizes for the next projection.  Every
+// interleaved call must be bitwise native_mmvq's, the second call must REUSE the copy, and the copy
+// after a re-quantize must be rebuilt - the three things a missing invalidate() or a shape-blind
+// guard gets wrong, and the reason a window multiplies a layer's weights against another layer's
+// activations.
+int run_sequence(cudaStream_t s) {
+    struct Step { const char* name; int type, n_in, n_out, block_elems, block_bytes, scale_at[2]; bool writes_xq; };
+    const Step steps[] = {
+        {"qkv    2560x10240", 23, 2560, 10240, 256, 136, {0, -1}, true},    // the fused GR read wrote xq_
+        {"gate   2560x6144",  23, 2560, 6144,  256, 136, {0, -1}, false},   // the same columns, same shape
+        {"out    6144x2560",  12, 6144, 2560,  256, 144, {0, 2},  true},    // the GDN step re-quantizes
+        {"attno  512x2560",   13, 512,  2560,  256, 176, {0, 2},  true},    // the attention output's
+        {"head   2560x20480", 11, 2560, 20480, 256, 110, {108, -1}, true},  // the head
+    };
+    const int max_in = 6144, max_cols = 6;   // a --spec 4 + MTP verify window is six tokens wide
+    void* xq = nullptr;
+    void* xil = nullptr;
+    if (!ck(cudaMalloc(&xq, native_q8_1_bytes(max_in, max_cols)), "malloc xq") ||
+        !ck(cudaMalloc(&xil, native_q8_1_il_bytes(max_in, max_cols)), "malloc xil")) return 1;
+    int bad = 0;
+    std::mt19937 rng(4242u);
+    std::normal_distribution<float> nd(0.f, 1.f);
+    for (int T = 2; T <= 6; ++T) {
+        Q81IlCopy guard;
+        guard.init(xil, max_in, max_cols);
+        bool any_il = false;
+        for (const Step& st : steps) {
+            const std::size_t wbytes = native_mmvq_weight_bytes(st.type, st.n_in, st.n_out);
+            std::vector<uint8_t> w(wbytes);
+            for (auto& b : w) b = (uint8_t) (rng() & 0xff);
+            const std::size_t n_blocks = (std::size_t) st.n_out * (std::size_t) (st.n_in / st.block_elems);
+            for (std::size_t k = 0; k < n_blocks; ++k)
+                for (int at : st.scale_at)
+                    if (at >= 0) {
+                        const uint16_t h = sane_half(rng);
+                        std::memcpy(&w[k * (std::size_t) st.block_bytes + (std::size_t) at], &h, 2);
+                    }
+            void* dw = nullptr;
+            float *ya = nullptr, *yb = nullptr;
+            if (!ck(cudaMalloc(&dw, wbytes), "malloc w") ||
+                !ck(cudaMalloc(&ya, (std::size_t) T * st.n_out * 4), "malloc ya") ||
+                !ck(cudaMalloc(&yb, (std::size_t) T * st.n_out * 4), "malloc yb")) { bad = 1; break; }
+            std::vector<float> x((std::size_t) T * st.n_in);
+            for (auto& v : x) v = nd(rng);
+            float* dx = nullptr;
+            if (!ck(cudaMalloc(&dx, x.size() * 4), "malloc dx")) { bad = 1; break; }
+            ck(cudaMemcpy(dx, x.data(), x.size() * 4, cudaMemcpyHostToDevice), "copy x");
+            if (st.writes_xq) { quantize_q8_1_rows(dx, T, st.n_in, xq, s); guard.invalidate(); }
+            native_mmvq(st.type, dw, xq, ya, st.n_in, st.n_out, T, s);
+            const void* x_il = guard.read(xq, st.n_in, T, s);   // rebuilds on a shape change or a write
+            native_mmvq_il(st.type, dw, xq, x_il, yb, st.n_in, st.n_out, T, s);
+            any_il |= native_mmvq_il_supported(st.type, T, st.n_out);
+            if (!ck(cudaStreamSynchronize(s), "sequence")) { bad = 1; break; }
+            std::vector<uint32_t> a((std::size_t) T * st.n_out), b(a.size());
+            ck(cudaMemcpy(a.data(), ya, a.size() * 4, cudaMemcpyDeviceToHost), "read ref");
+            ck(cudaMemcpy(b.data(), yb, b.size() * 4, cudaMemcpyDeviceToHost), "read il");
+            long long diff = 0;
+            for (size_t i = 0; i < a.size(); ++i) if (a[i] != b[i]) ++diff;
+            if (diff != 0) {
+                ++bad;
+                std::printf("FAIL sequence T=%d %-18s: %lld of %zu values differ from native_mmvq "
+                           "(copy built %lld times, reused %lld, shape %d x %d)\n",
+                           T, st.name, diff, a.size(), (long long) guard.builds(), (long long) guard.uses(),
+                           guard.shape_n_in(), guard.shape_ncols());
+            }
+            cudaFree(dw); cudaFree(ya); cudaFree(yb); cudaFree(dx);
+        }
+        if (!any_il) {
+            ++bad;
+            std::printf("FAIL sequence T=%d: no call in the window took the interleaved path\n", T);
+        } else if (guard.uses() < 1) {
+            ++bad;
+            std::printf("FAIL sequence T=%d: the gate projection rebuilt the copy instead of reusing it "
+                       "(%lld builds, %lld uses)\n", T, (long long) guard.builds(), (long long) guard.uses());
+        } else {
+            std::printf("sequence T=%d: %lld copies built, %lld calls reused one, all outputs bitwise\n",
+                       T, (long long) guard.builds(), (long long) guard.uses());
+        }
+    }
+    cudaFree(xq); cudaFree(xil);
+    return bad;
+}
+
 // the per-architecture lookup, no GPU needed for its answers
 int check_tables() {
     int bad = 0;
@@ -310,25 +396,176 @@ int check_tables() {
         ++bad;
         std::printf("FAIL table: the sm_60 table is not the P100's\n");
     }
-    if (native_mmvq_il_rows_for(89, 99, 2, 2560) != 0 || native_mmvq_il_rows_for(89, 12, 5, 2560) != 0) {
+    if (native_mmvq_il_rows_for(89, 99, 2, 2560) != 0 || native_mmvq_il_rows_for(89, 12, 7, 2560) != 0) {
         ++bad;
-        std::printf("FAIL table: an unknown type or ncols must be 0\n");
+        std::printf("FAIL table: an unknown type or an ncols with no kernel must be 0\n");
+    }
+    // HYPERCORE_MMVQ_IL_WIDE: 5 and 6 columns follow the four-column cell's decision, at two rows a warp;
+    // turning the switch off puts every width above four back on native_mmvq's kernels.
+    setenv("HYPERCORE_MMVQ_IL_WIDE", "0", 1);
+    if (native_mmvq_il_rows_for(89, 12, 5, 2560) != 0 || native_mmvq_il_rows_for(89, 12, 6, 2560) != 0) {
+        ++bad;
+        std::printf("FAIL table: HYPERCORE_MMVQ_IL_WIDE=0 must leave 5 and 6 columns to native_mmvq\n");
+    }
+    setenv("HYPERCORE_MMVQ_IL_WIDE", "1", 1);
+    for (int nc : {5, 6}) {
+        const int four = native_mmvq_il_rows_for(89, 12, 4, 2560);
+        const int wide = native_mmvq_il_rows_for(89, 12, nc, 2560);
+        if (wide != (four ? 2 : 0)) {
+            ++bad;
+            std::printf("FAIL table: ncols=%d answered %d, the four-column cell answered %d\n", nc, wide, four);
+        }
+    }
+    return bad;
+}
+
+// --guard: the copy guard's state machine on ordinary memory.  native_q8_1_interleave is swapped for a
+// host model of the same layout, so a window's call order can be walked with the card busy or absent and
+// every read compared against the bytes the source holds at that moment.  This is the test for the one
+// thing record_window has to get right: every write to xq_ goes through invalidate().  A write that does
+// not is caught here as a read returning bytes that are not the current source's.
+float half_to_float(uint16_t h) {
+    const uint32_t sign = (h & 0x8000u) ? 0x80000000u : 0u;
+    const uint32_t exp = (h >> 10) & 0x3fu, mant = h & 0x3ffu;
+    if (exp == 0u) {
+        if (mant == 0u) return sign ? -0.0f : 0.0f;
+        float v = (float)mant * (1.0f / 16777216.0f);   // subnormal half: mant * 2^-24
+        return sign ? -v : v;
+    }
+    if (exp == 0x3fu) return mant ? (float)NAN : (sign ? -INFINITY : INFINITY);
+    uint32_t bits = sign | (((exp - 15u) + 127u) << 23) | (mant << 13);
+    float f; std::memcpy(&f, &bits, sizeof f); return f;
+}
+
+void host_interleave(const void* src, void* dst, int n_in, int ncols, void*) {
+    const int nb = n_in / 32, cp = native_q8_1_il_cp(ncols);
+    int* bm = static_cast<int*>(dst);
+    int* pm = bm + (size_t)nb * 8 * cp;
+    float* d = reinterpret_cast<float*>(bm + 2 * (size_t)nb * 8 * cp);
+    for (int c = 0; c < ncols; ++c) {
+        for (int b = 0; b < nb; ++b) {
+            const uint8_t* blk = static_cast<const uint8_t*>(src) + (size_t)c * nb * 36 + (size_t)b * 36;
+            for (int p = 0; p < 8; ++p) {
+                int v; std::memcpy(&v, blk + 4 + p * 4, sizeof v);
+                bm[((size_t)b * 8 + p) * cp + c] = v;      // block-major, the layout Q81Il reads
+                pm[((size_t)p * nb + b) * cp + c] = v;     // position-major, the one the PM families read
+            }
+            uint16_t lo; std::memcpy(&lo, blk, sizeof lo);
+            d[(size_t)b * cp + c] = half_to_float(lo);     // __low2float(ds), the scale the dots use
+        }
+    }
+}
+
+int run_guard() {
+    int bad = 0;
+    const int N = 2560, ZV = 6144;
+    for (int T : {2, 3, 4, 6}) {   // a one-column window never reads the copy at all
+        const int max_in = std::max(N, ZV);
+        std::vector<uint8_t> xq(native_q8_1_bytes(max_in, T), 0);
+        std::vector<uint8_t> il(native_q8_1_il_bytes(max_in, T), 0), want(il.size(), 0);
+        Q81IlCopy guard;
+        guard.init(il.data(), max_in, T);
+        guard.set_builder(host_interleave);
+        int calls = 0;   // interleaved calls in the block being walked, i.e. those with ncols >= 2
+
+        auto write_xq = [&](int rows, int seed) {   // a layer quantizing its activations into xq_
+            for (size_t i = 0; i < xq.size(); ++i) xq[i] = (uint8_t)(((size_t)seed * 7 + i * 131) & 0xffu);
+            (void) rows;   // the real write covers rows' columns; the model writes the whole buffer
+        };
+        auto read = [&](int n_in, int ncols, const char* what) {
+            const void* got = guard.read(xq.data(), n_in, ncols, nullptr);
+            if (ncols < 2) return;   // one column: the plain blocks, the copy is not touched
+            ++calls;
+            host_interleave(xq.data(), want.data(), n_in, ncols, nullptr);
+            const size_t bytes = native_q8_1_il_bytes(n_in, ncols);
+            if (bytes > il.size()) {
+                ++bad;
+                std::printf("FAIL guard T=%d %s: (n_in=%d, ncols=%d) needs %zu bytes, the buffer holds %zu\n",
+                            T, what, n_in, ncols, bytes, il.size());
+                return;
+            }
+            if (std::memcmp(got, want.data(), bytes) != 0) {
+                ++bad;
+                std::printf("FAIL guard T=%d %s: the copy for (n_in=%d, ncols=%d) is not the source's current "
+                            "bytes - a write to xq_ missed invalidate()\n", T, what, n_in, ncols);
+            }
+        };
+
+        // One window, in the order record_window walks it: the read's quantize, the qkv and the gate off
+        // the same columns, the attention/GDN quantize, its out projection, the shared expert's own
+        // quantize into nsw.q8_1 (xq_ when the shared stream is not forked), the next layer, the head.
+        write_xq(N, 1); guard.invalidate();
+        read(N, T, "qkv layer 1");
+        read(N, T, "gate layer 1");        // same shape, no write between: must reuse, and still match
+        write_xq(ZV, 2); guard.invalidate();
+        read(ZV, T, "out layer 1");
+        write_xq(N, 3); guard.invalidate();
+        read(N, T, "qkv layer 2");
+        write_xq(N, 4); guard.invalidate();   // shared_expert_multi's native_quantize_q8_1(x, nw.q8_1, ...)
+        read(N, T, "qkv layer 3");
+        write_xq(N, 5); guard.invalidate();   // the head's
+        read(N, T, "head");
+        if (calls < 2 || guard.builds() != calls - 1 || guard.uses() != 1) {
+            ++bad;
+            std::printf("FAIL guard T=%d: %d interleaved calls built %lld copies and reused one %lld times; "
+                        "one shape read twice with nothing written between is the only legal reuse\n",
+                        T, calls, (long long)guard.builds(), (long long)guard.uses());
+        }
+
+        // The isolation arm, HYPERCORE_MMVQ_IL_REUSE=0: every call builds.  Same answers, more work - and
+        // it is what separates "a write missed invalidate()" from "the kernel is wrong".
+        guard.set_reuse(false); guard.reset(); calls = 0;
+        write_xq(N, 6); guard.invalidate();
+        read(N, T, "qkv, no reuse 1");
+        read(N, T, "gate, no reuse 2");
+        if (guard.uses() != 0 || guard.builds() != calls) {
+            ++bad;
+            std::printf("FAIL guard T=%d: REUSE=0 built %lld copies for %d interleaved calls\n",
+                       T, (long long)guard.builds(), calls);
+        }
+        guard.set_reuse(true);
+
+        // The negative control: a write that never reaches the guard.  The read after it must come back
+        // different, or this test is measuring nothing.
+        guard.reset(); calls = 0;
+        write_xq(N, 7); guard.invalidate();
+        read(N, T, "qkv, then an unguarded write");
+        write_xq(N, 8);                        // no invalidate(): the hole the shared expert had
+        const void* stale = guard.read(xq.data(), N, T, nullptr);
+        host_interleave(xq.data(), want.data(), N, T, nullptr);
+        if (std::memcmp(stale, want.data(), native_q8_1_il_bytes(N, T)) == 0) {
+            ++bad;
+            std::printf("FAIL guard T=%d: a write without invalidate() was not detected - the test cannot see staleness\n", T);
+        }
     }
     return bad;
 }
 }  // namespace
 
 int main(int argc, char** argv) {
+    // --tables: the rows-a-warp lookup alone, no GPU work.  Useful when the card is busy with a running engine.
+    const bool only_tables = argc > 1 && std::string(argv[1]) == "--tables";
+    const bool only_guard = argc > 1 && std::string(argv[1]) == "--guard";   // the copy guard, on the host
+    if (only_guard) {
+        int bad = run_guard();
+        std::printf("%s\n", bad ? "mmvq_il_parity: FAIL (guard)" : "mmvq_il_parity: OK (the copy guard, no card)");
+        return bad ? 1 : 0;
+    }
     const bool bench = argc > 1 && std::string(argv[1]) == "--bench";
     const bool emit = bench && argc > 2 && std::string(argv[2]) == "--emit-table";
     cudaStream_t s;
     cudaStreamCreate(&s);
     int bad = 0;
     bad += check_tables();
+    if (only_tables) {
+        std::printf("%s\n", bad ? "mmvq_il_parity: FAIL (table)" : "mmvq_il_parity: OK (the table only, no kernel ran)");
+        return bad ? 1 : 0;
+    }
     const char* only = std::getenv("MMVQ_IL_ONLY");   // 143-dense: only the cases whose name contains this
     for (const Case& c : CASES)
         if (only == nullptr || std::strstr(c.name, only) != nullptr) bad += run_case(c, bench, s);
     if (emit) emit_table();
+    bad += run_sequence(s);   // the window's call order through the copy guard, always
     std::printf("%s\n", bad ? "mmvq_il_parity: FAIL" : "mmvq_il_parity: OK (every case, T 1-4, rows 1/2/4 and the table, bitwise)");
     return bad ? 1 : 0;
 }

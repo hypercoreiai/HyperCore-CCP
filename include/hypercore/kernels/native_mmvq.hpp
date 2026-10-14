@@ -59,6 +59,10 @@ void native_mmvq_il(int ggml_type, const void* weights, const void* x_q8_1, cons
 /// The table's rows a warp (0, 1, 2, 4; 0 = native_mmvq's kernels) for a card of compute capability `cc` (major * 10 + minor).
 /// Per-architecture tables plus HYPERCORE_MMVQ_IL_ROWS; see native_mmvq.cu and docs/MMVQ_IL_TABLE.md.
 int native_mmvq_il_rows_for(int cc, int ggml_type, int ncols, int n_out);
+/// HYPERCORE_MMVQ_IL_CHECK: compare two device outputs ON the device.  A verify window is a captured graph, so a
+/// sync or a host copy cannot appear inside it; the counts go into stat[0] (differing values), stat[1] (calls with
+/// any difference) and stat[2] (calls compared).  Both pointers are device pointers, n elements each.
+void native_mmvq_il_diff(const float* a, const float* b, int n, int* stat, void* stream);
 /// Tests and benchmarks: every native_mmvq_il call takes `rows` a warp (0: the table).
 void native_mmvq_il_tune(int rows);
 

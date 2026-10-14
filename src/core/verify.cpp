@@ -491,8 +491,21 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
         lo_ = b.take<float>(T * (uint64_t) g.hc_lr); rs_ = b.take<float>(T * HC); xn_ = b.take<float>(T * HC * N);
         xq_ = b.take<uint8_t>(hypercore::kernels::native_q8_1_bytes(max_in, (int) T));
         sh_xq_ = b.take<uint8_t>(hypercore::kernels::native_q8_1_bytes(max_in, (int) T));
-        if (mmvq_il_on())   // HYPERCORE_MMVQ_IL: the interleaved copy the small-batch matvec reads
+        if (mmvq_il_on()) {   // HYPERCORE_MMVQ_IL: the interleaved copy the small-batch matvec reads
             xil_ = b.take<uint8_t>(hypercore::kernels::native_q8_1_il_bytes(max_in, (int) T));
+            il_copy_.init(xil_, max_in, (int) T);   // Q81IlCopy: the shape the buffer holds, and its validity
+            // HYPERCORE_MMVQ_IL_REUSE=0 rebuilds the copy at every interleaved call: the isolation arm for
+            // "is a stale copy the cause?".  Slower by construction; never wrong for the same reason.
+            const char* ru = std::getenv("HYPERCORE_MMVQ_IL_REUSE");
+            il_copy_.set_reuse(ru == nullptr || ru[0] != '0');
+            if (il_check_on()) {   // HYPERCORE_MMVQ_IL_CHECK: native_mmvq's side of the comparison, on the device.
+                // The widest call the window makes is T columns of the largest output; everything else is smaller.
+                const uint64_t max_out = std::max<uint64_t>({(uint64_t) n_vocab_, (uint64_t) max_in, C, ZV, HV,
+                                                           (uint64_t) hypercore::kernels::NG_HC_DIM});
+                il_check_out_ = b.take<float>((uint64_t) T * max_out);
+                il_stat_ = b.take<int32_t>(32 * 4);   // the arena is memset: the counters start at zero
+            }
+        }
         qkv_L_ = b.take<float>(nG * T * C); h_L_ = b.take<float>(nG * T * C);
         gate_L_ = b.take<float>(nG * T * HV); beta_L_ = b.take<float>(nG * T * HV);
         z_ = b.take<float>(T * ZV); y_ = b.take<float>(T * ZV); y_dummy_ = b.take<float>(T * ZV);
@@ -662,6 +675,17 @@ const float* Verifier::final_R(int t) const { return R_ + (size_t) t * (size_t) 
 // so the CPU computes A's experts of layer l while the GPU runs B's mixer and router of layer l, and B's experts
 // while the GPU combines A and runs A's layer l+1.  B's mixer only needs A's mixer of the same layer (K/V, GDN
 // state), never A's experts, so nothing waits that did not wait before.  Every token's arithmetic is unchanged.
+namespace {
+// A quantization as the interleaved-path trace names it (HYPERCORE_MMVQ_IL_TRACE, and the check report).
+const char* il_type_name(int t) {
+    switch (t) {
+        case 2:  return "Q4_0";   case 6:  return "Q5_0";   case 8:  return "Q8_0";  case 11: return "Q3_K";
+        case 12: return "Q4_K";   case 13: return "Q5_K";   case 14: return "Q6_K";  case 23: return "IQ4_XS";
+        case 20: return "IQ4_NL"; case 42: return "Q2_0";   default: return "type";
+    }
+}
+}  // namespace
+
 bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
     using namespace hypercore::kernels;
     const ModelGeometry& g = *g_;
@@ -696,41 +720,51 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
     static const bool il_check = [] { const char* v = std::getenv("HYPERCORE_MMVQ_IL_CHECK"); return v && v[0] != '0'; }();
     // xil_ is a copy of xq_'s columns in the interleaved layout, so it is only valid for the (n_in, ncols) it was
     // written for and only while xq_ still holds those activations.  Any write to xq_ or any different shape makes it
-    // stale: reading it anyway multiplies the weights against another layer's activations.
-    bool il_ready = false;
-    int il_n_in = 0, il_ncols = 0;
-    auto il_fresh = [&](int n_in, int ncols) { return il_ready && il_n_in == n_in && il_ncols == ncols; };
+    // stale: reading it anyway multiplies the weights against another layer's activations.  Q81IlCopy (kernels/
+    // q8_1_il_copy.hpp) owns that state: read() rebuilds on any shape change, and every write to xq_ below calls
+    // invalidate().  A fresh window starts with nothing built.
+    il_copy_.reset();
+    // HYPERCORE_MMVQ_IL_TRACE=1: what the window actually asks for.  Host-side and capture-time only - the graph
+    // replays what was recorded - so this names every (type, n_in x ncols -> n_out) the window reads, whether its
+    // copy was built or reused, and the order the first layer's calls come in.  A shape-blind guard, or a write to
+    // xq_ that forgot to invalidate, shows up here as a reuse that should have been a build.
+    static const bool il_trace = [] { const char* v = std::getenv("HYPERCORE_MMVQ_IL_TRACE"); return v && v[0] != '0'; }();
+    std::vector<std::string> il_seq;   // the calls in order, the first layer's
+    std::map<std::array<int, 4>, std::array<int, 2>> il_shapes;   // shape -> {builds, reuses}
+    int il_tried = 0;
     auto mmvq = [&](int type, const void* weights, const void* x_q8_1, float* out, int n_in, int n_out, int ncols,
                     cudaStream_t s) {
         if (il_on && native_mmvq_il_supported(type, ncols, n_out)) {
-            if (ncols >= 2 && !il_fresh(n_in, ncols)) {
-                native_q8_1_interleave(x_q8_1, xil_, n_in, ncols, cs);
-                il_ready = true; il_n_in = n_in; il_ncols = ncols;
-                ++il_builds;
-            } else {
-                ++il_uses;
-            }
-            native_mmvq_il(type, weights, x_q8_1, il_fresh(n_in, ncols) ? xil_ : x_q8_1, out, n_in, n_out, ncols, cs);
-            if (il_check) {
-                il_check_buf_.assign((size_t) n_out * ncols, 0.0f);
-                native_mmvq(type, weights, x_q8_1, il_check_buf_.data(), n_in, n_out, ncols, cs);
-                if (cudaStreamSynchronize(cs) == cudaSuccess) {
-                    long long diff = 0;
-                    for (std::size_t i = 0; i < il_check_buf_.size(); ++i) if (out[i] != il_check_buf_[i]) ++diff;
-                    if (diff) {
-                        ++il_mismatch_calls; il_mismatch_values += diff;
-                        if (il_first_mismatch.empty())
-                            il_first_mismatch = std::string("type ") + std::to_string(type) + " n_in " +
-                                              std::to_string(n_in) + " x " + std::to_string(ncols) + " -> " +
-                                              std::to_string(n_out);
-                    }
+            const int64_t il_before = il_copy_.builds();
+            const void* x_il = il_copy_.read(x_q8_1, n_in, ncols, cs);
+            const bool il_built = il_copy_.builds() > il_before;
+            ++il_tried;
+            auto& cnt = il_shapes[{type, n_in, ncols, n_out}];
+            cnt[il_built ? 0 : 1]++;
+            if (il_trace && il_seq.size() < 16)
+                il_seq.push_back(std::string(il_type_name(type)) + " " + std::to_string(n_in) + "x" +
+                                 std::to_string(ncols) + "->" + std::to_string(n_out) + (il_built ? " build" : " reuse"));
+            native_mmvq_il(type, weights, x_q8_1, x_il, out, n_in, n_out, ncols, cs);
+            if (il_check && il_stat_ != nullptr) {
+                // On the device, because the window is a captured graph: no sync, no host copy may appear here.
+                // One counter slot per distinct (type, n_in, ncols, n_out), read after the request.
+                const std::array<int, 4> key{type, n_in, ncols, n_out};
+                int site = -1;
+                for (size_t i = 0; i < il_site_count_; ++i) if (il_sites_[i] == key) { site = int(i); break; }
+                if (site < 0 && il_site_count_ < il_sites_.size()) {
+                    il_sites_[il_site_count_] = key;
+                    site = int(il_site_count_++);
+                }
+                if (site >= 0) {
+                    native_mmvq(type, weights, x_q8_1, il_check_out_, n_in, n_out, ncols, cs);
+                    hypercore::kernels::native_mmvq_il_diff(out, il_check_out_, n_out * ncols, il_stat_ + site * 4, cs);
                 }
             }
         } else {
             native_mmvq(type, weights, x_q8_1, out, n_in, n_out, ncols, s);
         }
     };
-    auto quant_xq = [&](const float* src, int n) { native_quantize_q8_1(src, xq_, (int) N, n, cs); il_ready = false; };
+    auto quant_xq = [&](const float* src, int n) { native_quantize_q8_1(src, xq_, (int) N, n, cs); il_copy_.invalidate(); };
     const int tb_[2] = {0, (T + 1) / 2}, te_[2] = {G == 2 ? (T + 1) / 2 : T, T};
     // S26 HYPERCORE_LFUSE=1: where the shared expert's gate / scale fusions apply (the paths they replace are the ones taken)
     auto lfuse_on = [&](int n) {
@@ -899,7 +933,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
             return fused_gr_read_multi(fa, n, xn_ + (size_t) tb * HC * N, cs, (prof_on_ && grp == 0) ? prof_ : nullptr,
                                 (int) (l * kProfPer + (half == 0 ? 27 : 30)));
         };
-        const bool q8_attn = gr_read_group(0, pending, inj2_, inj_); il_ready = false;   // the fused read wrote xq_   // true: xq_ holds mixed's q8_1 (HYPERCORE_QFUSE)
+        const bool q8_attn = gr_read_group(0, pending, inj2_, inj_); il_copy_.invalidate();   // the fused read wrote xq_   // true: xq_ holds mixed's q8_1 (HYPERCORE_QFUSE)
         stamp(l, 1, grp);
         float* xm = mixed_ + tb * N;
         try {
@@ -963,7 +997,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                 stamp(l, 6, grp);
                 // HYPERCORE_QFUSE: with the fused step the kernel wrote xq_ itself (the last argument above), so the
                 // interleaved copy is stale either way.
-                il_ready = false;
+                il_copy_.invalidate();
                 if (!g_qfuse()) native_quantize_q8_1(y_ + (size_t) tb * ZV, xq_, (int) ZV, n, cs);
                 mmvq(wout->native_type, wout->native_data, xq_, bo_ + tb * N, (int) ZV, (int) N, n, cs);
             } else {
@@ -1158,7 +1192,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                         qsa_gate_apply_f32(attn_ + t * NH * HD, qfull_ + t * NH * 2 * HD, s, attn32_ + t * NH * HD, cs);
                 }
                 stamp(l, 14, grp);
-                native_quantize_q8_1(attn32_ + tb * NH * HD, xq_, (int) (NH * HD), n, cs); il_ready = false;
+                native_quantize_q8_1(attn32_ + tb * NH * HD, xq_, (int) (NH * HD), n, cs); il_copy_.invalidate();
                 mmvq(wo->native_type, wo->native_data, xq_, bo_ + tb * N, (int) (NH * HD), (int) N, n, cs);
             }
         } catch (const std::exception& e) {
@@ -1283,6 +1317,10 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                                     qdedup ? (const void*) (nat_xq_ + (size_t) tb * (N / 32) * 36) : nullptr,
                                     (sg_ready ? 1 : 0) | (lfuse_on(n) && g_lfuse_pair() ? 2 : 0));
                 sg_gated_[grp] = sg_ready;
+                // shared_expert_multi quantized its input and its SwiGLU into nsw.q8_1, which is xq_ when the
+                // shared stream is not forked (shared_expert.cu: native_quantize_q8_1(x, nw.q8_1, ...)).  That
+                // is a write to the window's activations like any other: the copy has to know about it.
+                if (!sh_fork) il_copy_.invalidate();
             } catch (const std::exception& e) {
                 err = std::string("verify shared expert: ") + e.what();
                 return false;
@@ -1498,7 +1536,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
         }
         if (head_ != nullptr && head_->loaded()) {
             try {
-                native_quantize_q8_1(head_mixed_, xq_, (int) N, T, cs); il_ready = false;
+                native_quantize_q8_1(head_mixed_, xq_, (int) N, T, cs); il_copy_.invalidate();
                 mmvq(head_->type(), head_->weights(), xq_, head_logits_, (int) N, (int) n_vocab_, T, cs);
             } catch (const std::exception& e) {
                 err = std::string("verify head: ") + e.what();
@@ -1521,8 +1559,61 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
         if (nan_guard_on() && m_nf_ != nullptr)
             logits_nonfinite_rows(head_logits_, T, (int) n_vocab_, m_nf_, cs);
     }
+    // The window's own counters, for the report the engine prints per request.  A captured graph is replayed many
+    // times, so these are per capture: "builds" is the number of copies the window writes, "reuses" the calls that
+    // read one already written.  A window that builds a copy for every call is not reusing anything.
+    il_builds += il_copy_.builds();
+    il_uses += il_copy_.uses();
+    if (il_trace && il_tried) {
+        int il_built = 0, il_reused = 0;
+        for (auto& kv : il_shapes) { il_built += kv.second[0]; il_reused += kv.second[1]; }
+        std::fprintf(stderr, "hypercore verify: MMVQ_IL trace, the %d-token window: %d interleaved calls, %d copies "
+                             "built, %d reused, %zu shapes\n", T, il_tried, il_built, il_reused, il_shapes.size());
+        if (!il_traced) {   // the call list once is enough; every width has the same shapes
+            il_traced = true;
+            for (size_t i = 0; i < il_seq.size(); ++i)
+                std::fprintf(stderr, "  call %zu: %s\n", i + 1, il_seq[i].c_str());
+            for (auto& kv : il_shapes)
+                if (kv.second[0] + kv.second[1] > 0)
+                    std::fprintf(stderr, "  %s %d x %d -> %d: %d builds, %d reuses\n",
+                                il_type_name(kv.first[0]), kv.first[1], kv.first[2], kv.first[3], kv.second[0], kv.second[1]);
+        }
+    }
     stamp(g.n_layers, 1, 0);
     return true;
+}
+
+// HYPERCORE_MMVQ_IL_CHECK=1: every interleaved call is also run through native_mmvq and compared on the device, so a
+// wrong copy is named in the log instead of showing up as garbled text.  It halves the dense throughput: a
+// diagnostic, not a mode.
+bool Verifier::il_check_on() {
+    static const bool on = [] {
+        const char* v = std::getenv("HYPERCORE_MMVQ_IL_CHECK");
+        return v != nullptr && v[0] != '0';
+    }();
+    return on;
+}
+
+std::string Verifier::il_check_report() const {
+    if (il_stat_ == nullptr || il_site_count_ == 0) return {};
+    std::vector<int32_t> h(il_site_count_ * 4, 0);
+    if (cudaMemcpy(h.data(), il_stat_, il_site_count_ * 4 * sizeof(int32_t), cudaMemcpyDeviceToHost) != cudaSuccess) {
+        (void) cudaGetLastError();
+        return {};
+    }
+    std::string out;
+    int64_t calls = 0, bad = 0, vals = 0;
+    for (size_t i = 0; i < il_site_count_; ++i) {
+        calls += h[i * 4 + 2]; bad += h[i * 4 + 1]; vals += h[i * 4];
+        if (h[i * 4 + 1] == 0) continue;
+        out += "  " + std::string(il_type_name(il_sites_[i][0])) + " " + std::to_string(il_sites_[i][1]) + " x " +
+               std::to_string(il_sites_[i][2]) + " columns -> " + std::to_string(il_sites_[i][3]) + ": " +
+               std::to_string(h[i * 4 + 1]) + " of " + std::to_string(h[i * 4 + 2]) + " calls differ, " +
+               std::to_string(h[i * 4]) + " values\n";
+    }
+    il_mismatch_calls = bad; il_mismatch_values = vals; il_checked_calls = calls;
+    (void) calls;
+    return out;
 }
 
 // HYPERCORE_MMVQ_IL=1 uses the interleaved matvec; off by default (the A/B arm of the interleaved matvec).

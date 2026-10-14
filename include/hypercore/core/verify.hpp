@@ -21,11 +21,13 @@
 // selection, native indexer) and a profile-filled VRAM expert tier with its residency table on the device.
 #pragma once
 
+#include <array>
 #include <cstdio>
 
 #include "hypercore/core/expert_source.hpp"
 #include "hypercore/core/layer.hpp"
 #include "hypercore/core/session.hpp"
+#include "hypercore/kernels/q8_1_il_copy.hpp"
 #include "hypercore/kernels/sampler.hpp"
 
 #include <cuda_runtime.h>
@@ -283,10 +285,13 @@ public:
     double ms_wait = 0, ms_pool = 0, ms_host = 0, ms_commit = 0;
     double ms_gate = 0;   ///< host time a layer's plan was held for the adaptive copies (overlap only)
     int64_t windows = 0;
-    int64_t il_builds = 0, il_uses = 0;   ///< HYPERCORE_MMVQ_IL: interleaved copies built, and calls that reused one
-    int64_t il_mismatch_calls = 0, il_mismatch_values = 0;   ///< HYPERCORE_MMVQ_IL_CHECK: calls whose IL output differs
-    std::string il_first_mismatch;                          ///< the first such call, as "type n_in x ncols -> n_out"
-    std::vector<float> il_check_buf_;                       ///< the native_mmvq side of that comparison
+    int64_t il_builds = 0, il_uses = 0;   ///< HYPERCORE_MMVQ_IL: interleaved copies built, and calls that reused one (Q81IlCopy's counters, summed over the windows captured)
+    mutable int64_t il_mismatch_calls = 0, il_mismatch_values = 0;   ///< HYPERCORE_MMVQ_IL_CHECK: calls whose IL output differs
+    mutable int64_t il_checked_calls = 0;   ///< HYPERCORE_MMVQ_IL_CHECK: interleaved calls compared against native_mmvq
+    mutable bool il_traced = false;         ///< HYPERCORE_MMVQ_IL_TRACE: the call list has been printed once already
+    /// HYPERCORE_MMVQ_IL_CHECK=1: one line per (type, n_in x ncols -> n_out) whose interleaved output differs from
+    /// native_mmvq's, empty when every call matched.  Reads the device counters, so it is safe outside the graph.
+    std::string il_check_report() const;
     /// HYPERCORE_VERIFY_PROFILE=1 - GPU stage times of the windows since the last call (ms per
     /// window), as one line; empty when off.
     std::string profile_report();
@@ -433,7 +438,13 @@ private:
     int32_t* h_out_ = nullptr;   int32_t* m_out_ = nullptr;     // T argmax ids
     uint32_t* h_nf_ = nullptr;   uint32_t* m_nf_ = nullptr;     // #879: kVerifyMaxT * kNonfiniteBlocks flags
     uint8_t* xil_ = nullptr;                                    // HYPERCORE_MMVQ_IL: the interleaved copy of xq_'s columns
+    hypercore::kernels::Q81IlCopy il_copy_;                     // its shape and validity; see q8_1_il_copy.hpp
     static bool mmvq_il_on();                                   ///< HYPERCORE_MMVQ_IL=0 keeps native_mmvq's multi-column kernels
+    static bool il_check_on();                                  // HYPERCORE_MMVQ_IL_CHECK=1: compare every IL call on the device
+    int32_t* il_stat_ = nullptr;                                // per site: values differing, calls differing, calls compared
+    float* il_check_out_ = nullptr;                             // native_mmvq's side of that comparison, on the device
+    std::array<std::array<int, 4>, 32> il_sites_{};            // the shape each counter slot belongs to
+    size_t il_site_count_ = 0;
     int nf_row_ = -1;                                            ///< nonfinite_row()
     int64_t nf_pos_ = -1;                                        ///< nonfinite_pos()
     uint32_t nf_mask_ = 0;                                       ///< nonfinite_in(): bit t = row t

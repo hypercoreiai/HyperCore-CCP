@@ -1633,6 +1633,23 @@ void launch_il_rows(int r, const void* weights, const void* x_il, float* y, int 
     }
 }
 
+// 5 and 6 columns (native_mmvq.hpp, HYPERCORE_MMVQ_IL_WIDE): the same interleaved copy, two rows a warp.
+// Instantiated only for the widths the engine can ask for, so the wide path costs ten kernels rather than the
+// whole NC x R grid.
+template <typename I>
+void launch_il_wide(const void* weights, const void* x_il, float* y, int n_in, int n_out, int ncols, cudaStream_t s) {
+    const auto* w = static_cast<const typename I::F::Block*>(weights);
+    const unsigned blocks = unsigned(((n_out + 1) / 2 + 3) / 4);
+    const Q81IlParts parts = q8_1_il_parts(x_il, n_in, ncols);
+    const int* xq = I::PM ? parts.pm : parts.bm;
+    const float* xd = parts.d;
+    switch (ncols) {
+    case 5: native_mmvq_il_kernel<I, 5, 2><<<blocks, 4 * WARP, 0, s>>>(w, xq, xd, y, n_in, n_out); break;
+    case 6: native_mmvq_il_kernel<I, 6, 2><<<blocks, 4 * WARP, 0, s>>>(w, xq, xd, y, n_in, n_out); break;
+    default: throw std::invalid_argument("the wide interleaved path requires 5 or 6 columns");
+    }
+}
+
 // The interleaved copy (native_mmvq.hpp) of columns already quantized into plain q8_1 blocks, whoever wrote them (the
 // quantizer, a fused norm): the same bytes, one int of a block a thread.
 __global__ void native_q8_1_interleave_kernel(const Q81Block* __restrict__ y, int* __restrict__ bm, int* __restrict__ pm,
@@ -2490,7 +2507,7 @@ std::size_t native_q8_1_il_bytes(int n_in, int ncols) {
 
 void native_q8_1_interleave(const void* x_q8_1, void* x_il, int n_in, int ncols, void* stream) {
     validate_shape(n_in, ncols);
-    if (ncols < 2 || ncols > 4) throw std::invalid_argument("native_q8_1_interleave requires 2 <= ncols <= 4");
+    if (ncols < 2 || ncols > MAX_NCOLS) throw std::invalid_argument("native_q8_1_interleave requires 2 <= ncols <= 8");
     validate_pointer(x_q8_1);
     validate_pointer(x_il);
     validate_stream(stream);
@@ -2500,6 +2517,32 @@ void native_q8_1_interleave(const void* x_q8_1, void* x_il, int n_in, int ncols,
     native_q8_1_interleave_kernel<<<unsigned((n_total + 255) / 256), 256, 0, static_cast<cudaStream_t>(stream)>>>(
         static_cast<const Q81Block*>(x_q8_1), const_cast<int*>(parts.bm), const_cast<int*>(parts.pm),
         const_cast<float*>(parts.d), nb, n_total, cp);
+    launch_check();
+}
+
+// HYPERCORE_MMVQ_IL_CHECK: the interleaved output against native_mmvq's, compared on the device.  The verify window
+// is a captured graph, so a sync or a host copy cannot appear inside it: the counts stay on the device and are read
+// after the request.  stat[0] counts the differing values, stat[1] the calls with any difference, stat[2] the calls
+// compared.
+__global__ void mmvq_il_diff_kernel(const float* __restrict__ a, const float* __restrict__ b, int n,
+                                    int* __restrict__ stat) {
+    __shared__ int any;
+    if (threadIdx.x == 0) any = 0;
+    if (blockIdx.x == 0 && threadIdx.x == 0) atomicAdd(stat + 2, 1);   // this call was compared
+    __syncthreads();
+    const int i = int(blockIdx.x) * 256 + int(threadIdx.x);
+    if (i < n && a[i] != b[i]) { atomicAdd(stat, 1); any = 1; }
+    __syncthreads();
+    if (threadIdx.x == 0 && any) atomicAdd(stat + 1, 1);
+}
+
+void native_mmvq_il_diff(const float* a, const float* b, int n, int* stat, void* stream) {
+    if (n <= 0) return;
+    validate_pointer(a);
+    validate_pointer(b);
+    validate_pointer(stat);
+    validate_stream(stream);
+    mmvq_il_diff_kernel<<<unsigned((n + 255) / 256), 256, 0, static_cast<cudaStream_t>(stream)>>>(a, b, n, stat);
     launch_check();
 }
 
@@ -2622,8 +2665,15 @@ const std::vector<IlEnvRow>& il_env_rows() {
 }  // namespace
 // The rows a warp for a card of compute capability `cc` (major * 10 + minor); 0: native_mmvq's kernels.  Pure, so a test
 // can check every architecture's table without that card.
+// HYPERCORE_MMVQ_IL_WIDE (on by default, 0 turns it off): the 5 and 6 column windows a --spec 4 verify stage with
+// an MTP draft head is.  The interleaved copy needs no new layout - native_q8_1_il_cp already gives 5..8 columns
+// eight lanes - only a kernel instantiated for them.  The wide kernels run two rows a warp: at NC = 6 the
+// acc[4][R][6] accumulators of the four-row form do not stay in registers.  7 and 8 columns keep native_mmvq's.
+bool il_wide_on() { const char* v = std::getenv("HYPERCORE_MMVQ_IL_WIDE"); return v == nullptr || std::atoi(v) != 0; }
+
 int native_mmvq_il_rows_for(int cc, int type, int ncols, int n_out) {
-    if (ncols < 1 || ncols > 4) return 0;
+    if (ncols < 1 || ncols > 6) return 0;
+    if (ncols > 4 && !il_wide_on()) return 0;
     const int cls = n_out < 2048 ? 0 : n_out < 4096 ? 1 : n_out < 8192 ? 2 : n_out < 12288 ? 3 : 4;
     for (const IlEnvRow& e : il_env_rows())
         if (e.type == type && e.ncols == ncols) return e.r[cls];
@@ -2641,7 +2691,11 @@ int native_mmvq_il_rows_for(int cc, int type, int ncols, int n_out) {
     for (const IlArch& a : kIlArch)
         if (a.cc == cc && a.t != nullptr) { t = a.t; n = a.n; }
     for (size_t i = 0; i < n; ++i)
-        if (t[i].type == type) return t[i].r[ncols - 2][cls];
+        if (t[i].type == type) {
+            const int cell = ncols > 4 ? 2 : ncols - 2;   // a wide window has one kernel: two rows a warp
+            const int r = t[i].r[cell][cls];
+            return ncols > 4 ? (r ? 2 : 0) : r;           // a type this card does not interleave stays off
+        }
     return 0;
 }
 namespace {
@@ -2686,7 +2740,8 @@ bool il_arch_ok() {
 }  // namespace
 
 bool native_mmvq_il_supported(int ggml_type, int ncols, int n_out) {
-    if (ncols < 1 || ncols > 4 || !g_multi_exact || !il_arch_ok()) return false;
+    if (ncols < 1 || ncols > 6 || !g_multi_exact || !il_arch_ok()) return false;
+    if (ncols > 4 && !il_wide_on()) return false;
     return (g_tune_rows ? g_tune_rows : il_rows(ggml_type, ncols, n_out)) != 0 &&
            (ggml_type == 23 || ggml_type == 12 || ggml_type == 13 || ggml_type == 14 || ggml_type == 11);
 }
@@ -2705,6 +2760,17 @@ void native_mmvq_il(int ggml_type, const void* weights, const void* x_q8_1, cons
     validate_pointer(y);
     validate_stream(stream);
     const auto s = static_cast<cudaStream_t>(stream);
+    if (ncols > 4) {   // a --spec 4 + MTP window: the wide kernel; its rows a warp is fixed by the shape
+        switch (ggml_type) {
+        case 23: launch_il_wide<IlIQ4XS>(weights, x_il, y, n_in, n_out, ncols, s); break;
+        case 12: launch_il_wide<IlQ4K>(weights, x_il, y, n_in, n_out, ncols, s); break;
+        case 13: launch_il_wide<IlQ5K>(weights, x_il, y, n_in, n_out, ncols, s); break;
+        case 14: launch_il_wide<IlQ6K>(weights, x_il, y, n_in, n_out, ncols, s); break;
+        case 11: launch_il_wide<IlQ3K>(weights, x_il, y, n_in, n_out, ncols, s); break;
+        }
+        launch_check();
+        return;
+    }
     switch (ggml_type) {
     case 23: launch_il_rows<IlIQ4XS>(r, weights, x_il, y, n_in, n_out, ncols, s); break;
     case 12: launch_il_rows<IlQ4K>(r, weights, x_il, y, n_in, n_out, ncols, s); break;
@@ -2721,6 +2787,7 @@ void native_q8_1_interleave(const void*, void*, int, int, void*) {
     throw std::invalid_argument("native_q8_1_interleave is CUDA only");
 }
 bool native_mmvq_il_supported(int, int, int) { return false; }
+void native_mmvq_il_diff(const float*, const float*, int, int*, void*) {}
 int native_mmvq_il_rows_for(int, int, int, int) { return 0; }
 void native_mmvq_il(int ggml_type, const void* weights, const void* x_q8_1, const void*, float* y, int n_in, int n_out,
                     int ncols, void* stream) {

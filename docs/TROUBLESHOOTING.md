@@ -74,8 +74,9 @@ its rated speed (enable EXPO/XMP in the BIOS) slows the CPU half.
 Three features added in 0.1.42 put extra work into every decode window. All three are off by default; each is turned on
 only by naming it:
 
-- `HYPERCORE_MMVQ_IL=1`: the interleaved copy of the q8_1 activations for the 2-4 column dense projections
-  ([MMVQ_IL_TABLE.md](MMVQ_IL_TABLE.md)).
+- `HYPERCORE_MMVQ_IL=1`: the interleaved copy of the q8_1 activations for the 2-6 column dense projections
+  ([MMVQ_IL_TABLE.md](MMVQ_IL_TABLE.md)). `HYPERCORE_MMVQ_IL_WIDE=0` puts the 5 and 6 column windows of a
+  `--spec 4` + MTP run back on `native_mmvq`'s kernels.
 - `HYPERCORE_NAN_GUARD=1` (#879): every window graph checks its own head logits for a NaN or an infinity beside the
   greedy pick. A window that meets one emits no tokens, the request ends with `DONE ... nonfinite`, its state is
   dropped and the next request reads the prompt from token 0, which is what a truncated answer looks like.
@@ -90,6 +91,21 @@ Measured on an RTX 4090 with 45 MiB free: `HYPERCORE_MMVQ_IL=1 HYPERCORE_MMVQ_IL
 `HYPERCORE_MMVQ_IL=1` alone answered but slowly, and `HYPERCORE_MMVQ_IL=0` answered normally. `MMVQ_IL_CHECK` runs
 every interleaved call through the plain kernel as well and compares it bit for bit, which halves dense throughput. It
 is a diagnostic for the guard, not a serving mode: leave it off unless you are measuring.
+
+**Why `MMVQ_IL` garbled it (found by the A/B, fixed).** The four runs that separated the causes were
+`IL=0 NAN=1 OVERLAP=0` clean, `IL=0 NAN=1 OVERLAP=1` clean, `IL=1 NAN=1 OVERLAP=1` garbled, `IL=1 NAN=0 OVERLAP=0`
+garbled: `MMVQ_IL` alone is the variable, the NaN guard and the overlap gate are innocent.
+
+The interleaved copy of the activations is only valid for the `(n_in, columns)` shape it was built for. The window
+builds it once per shape and reuses it, and the code tracked "is it built" as a single flag - so a copy made for
+2560 rows was read as 6144 rows by the next projection: a layer's weights multiplied against another layer's
+activations. Every write to the activations now clears the copy (`include/hypercore/kernels/q8_1_il_copy.hpp`,
+`Q81IlCopy::invalidate()`), including the fused gate/norm and the shared expert's own quantize, and `read()` rebuilds
+on any shape change. `build/mmvq_il_parity --guard` walks that state machine on the host, with no card.
+
+To tell a stale copy from a wrong kernel: `HYPERCORE_MMVQ_IL_REUSE=0` rebuilds the copy at every call. A run that is
+clean with reuse off and garbled with it on is a write that missed `invalidate()`; a run garbled either way is the
+interleaved kernel itself. `./debug_mmvq_il_ab.sh` runs the three arms in order and writes them to `debug/ab*`.
 
 **An earlier reply that came back empty is gone from the chat history (0.1.40, #843).**
 The server leaves out finished assistant turns that have no text, so the next reply does not copy the empty ones.
