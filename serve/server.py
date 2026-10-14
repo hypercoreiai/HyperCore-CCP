@@ -4936,6 +4936,22 @@ def parse_config_object(text: str) -> dict:
     return cfg
 
 
+def worker_binary_path(root: Path = ROOT) -> str:
+    """The worker the server spawns.
+
+    build-shared is the canonical build (shared library plus the thin worker), but a
+    cleaned tree leaves the same worker in build/ - its RUNPATH points at that build, so
+    it loads the same libhypercore_api.so.0. Candidates are tried in that order; the
+    canonical name is returned when none exists, so the error still names what to build.
+    """
+    for path in (root / "build-shared" / "hypercore-worker",
+                 root / "build" / "hypercore-worker",
+                 root / "engine" / "hypercore-worker"):
+        if path.is_file():
+            return str(path)
+    return str(root / "build-shared" / "hypercore-worker")
+
+
 def hypercore_worker_config(cfg: dict, raw_config: str = "") -> str:
     """Build the JSON config passed to hypercore-worker.
 
@@ -5126,9 +5142,12 @@ def main() -> int:
         except ValueError as e:
             raise SystemExit(f"[hypercore] config {e}")
         worker_config = hypercore_worker_config(cfg, config_text)
-        worker_binary = a.worker or cfg.get("worker") or str(ROOT / "build-shared/hypercore-worker")
+        worker_binary = a.worker or cfg.get("worker") or worker_binary_path()
         if not Path(worker_binary).is_absolute():
             worker_binary = str(Path(cfg.get("cwd") or ".").resolve() / worker_binary)
+        if not Path(worker_binary).is_file():
+            raise SystemExit(f"[hypercore] no worker binary at {worker_binary}: "
+                            "cmake --build build-shared --target hypercore-worker")
         socket_path = a.ipc_socket or cfg.get("ipc_socket") or f"/tmp/hypercore-worker-{a.port}.sock"
         # A worker with no model binds its socket in milliseconds. A worker that has to load
         # weights - the pack, the expert arena, the VRAM tier - takes the "minute or two" the
