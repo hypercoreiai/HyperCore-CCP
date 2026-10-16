@@ -79,6 +79,8 @@ jobs:
           node serve/web/test_stop_start_buttons.js
           node serve/web/test_surface_slider.js
           node serve/web/test_assist_thought_panel.js
+          node serve/web/test_prefix_tokens.js
+          node serve/web/test_large_document.js
 
   backend-parity:
     needs: supervisor-tests

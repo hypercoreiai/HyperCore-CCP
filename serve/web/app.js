@@ -595,11 +595,16 @@ $("req-all").addEventListener("click", () => { reqShowAll = !reqShowAll; if (las
 // Tools from the MCP servers in the run config: the chat offers them to the model (opt-in per request,
 // "hypercore_mcp": true, which only this page sends); the Monitor lists the servers and what they offer.
 let mcpInfo = {servers: [], tools: 0}, mcpRetry = null;
+let mcpContext = null;   // GET /mcp "context": what this server does with an over-cap prompt
 async function loadMcp() {
   try {
     const r = await fetch("mcp", {headers: headers()});
     if (!r.ok) return;
     mcpInfo = await r.json();
+    // The page cannot count the tool block the template writes; the server can. Take it whenever
+    // it is reported, including 0: a chat with no servers has no tool block at all.
+    if (mcpInfo && mcpInfo.prefix && Number.isFinite(mcpInfo.prefix.tokens)) prefix = mcpInfo.prefix;
+    if (mcpInfo && mcpInfo.context && Number.isFinite(mcpInfo.context.max_context)) mcpContext = mcpInfo.context;
   } catch (e) { return; /* an older server: no MCP */ }
   renderMcp();
   clearTimeout(mcpRetry);                          // right after the start, servers may still be starting (npx downloads)
@@ -1111,21 +1116,44 @@ bindTranscript($("assist-chat"));
 //
 // The browser has no tokenizer, so the count is anchored on the prompt_tokens the server reported for
 // the last request and adjusted by characters from there: exact at the moment the cap bites, and
-// never worse than a proportion away from it.
+// never worse than a proportion away from it. Before the first request there is no anchor, so the
+// template's own overhead comes from GET /mcp, which measures it with the real tokenizer and the real
+// tool list. The fallback is only for a server old enough not to report it.
 const CHARS_PER_TOKEN = 4;          // this model's BPE, measured on prose
 const LOW_WATER = 0.85;             // trim to this fraction of the cap, then stay quiet until it fills
-const PREFIX_TOKENS = 6200;         // the tool block + system prompt the template adds
-let anchor = {tokens: 0, chars: 0}; // the payload the last request actually sent
+const MIN_TURN_TOKENS = 256;        // the smallest room the newest turn is ever left
+const MARKER_CHARS = 72;            // the "characters omitted" line headTail inserts when it cuts
+const PREFIX_FALLBACK = 6200;       // the tool block + system prompt the template adds, for a server that says nothing
+let prefix = null;                  // what /mcp reported: {tokens, base}; null until it answers
+let anchor = {tokens: 0, chars: 0, ratio: 1 / CHARS_PER_TOKEN};   // the payload the last request actually sent, and the tokens per character the engine measured on it
+
+// The tool block is only in the prompt when this request offers the tools ("hypercore_mcp": true).
+// `offering` is passed by send() while it is working out whether this turn can carry the tools at
+// all; with nothing passed it follows the setting the user chose.
+function templatePrefix(offering) {
+  if (offering === undefined) offering = settings.mcp !== false;
+  if (!prefix) return PREFIX_FALLBACK;   // an older server: keep the number this page used to hardcode
+  return offering && mcpInfo.tools > 0 ? prefix.tokens : prefix.base;
+}
 
 function payloadChars(payload) {
   return payload.reduce((n, m) => n + String(m.content || "").length
                        + JSON.stringify(m.tool_calls || []).length, 0);
 }
 
-function estimateTokens(payload) {
+function estimateTokens(payload, offering) {
   const chars = payloadChars(payload);
-  if (anchor.tokens) return Math.max(0, anchor.tokens + Math.round((chars - anchor.chars) / CHARS_PER_TOKEN));
-  return Math.round(chars / CHARS_PER_TOKEN) + PREFIX_TOKENS;
+  if (anchor.tokens) {
+    // The engine counted this exact kind of content once, so use its ratio rather than the
+    // prose constant: a table, a log or a JSON file is denser than four characters a token.
+    const ratio = anchor.ratio || 1 / CHARS_PER_TOKEN;
+    let tokens = anchor.tokens + Math.round((chars - anchor.chars) * ratio);
+    // The anchor was measured with the tools the page offered. Turning them off removes exactly
+    // the block /mcp counted with the real tokenizer, so the tools-off fallback can still be tried.
+    if (!offering && anchor.offerTools && prefix) tokens -= prefix.tokens - prefix.base;
+    return Math.max(0, tokens);
+  }
+  return Math.round(chars / CHARS_PER_TOKEN) + templatePrefix(offering);
 }
 
 // A turn is a user message and everything the model produced before the next user message.
@@ -1160,33 +1188,61 @@ function summarizeDropped(turns) {
     "\n\n[" + HANDOFF_MARK + "]";
 }
 function headTail(text, keep) {
-  if (keep < 80 || text.length <= keep) return text;
+  if (text.length <= keep) return text;
+  if (keep <= 0) return "";              // no room at all: the turn contributes nothing
+  if (keep < 80) return text.slice(0, keep);   // too short to keep both ends meaningfully
   const head = Math.floor(keep / 2), tail = keep - head;
   const omitted = text.length - head - tail;
   return text.slice(0, head) + `\n\n[... ${omitted} characters omitted; the beginning and the end are kept]\n\n` +
     text.slice(-tail);
 }
 
-function pruneToContext(payload, cap) {
-  if (!cap || cap <= 0) return {messages: payload, cap: 0, dropped: 0, droppedChars: 0, tokens: 0, summary: ""};
+// How much room a turn has depends on every other turn in the payload, so one slice cannot get it
+// right. Clip the largest turn by exactly the amount the estimate is over, then measure again: each
+// pass removes characters, so it converges, and it stops when there is nothing left that can be cut
+// - which is the signal that the profile and the tool block alone have used the window.
+function clipToFit(kept, cap, offering) {
+  let clipped = 0;
+  for (let pass = 0; pass < 40; pass++) {
+    const over = estimateTokens(kept, offering) - cap;
+    if (over <= 0) return clipped;
+    const cut = (over + 1) * CHARS_PER_TOKEN + MARKER_CHARS;   // the estimate's rounding and the marker
+    const cuttable = kept.map((m, i) => [i, m])
+      .filter(([i, m]) => m.role !== "system" && typeof m.content === "string" && m.content.length > 0)
+      .sort((a, b) => a[1].content.length - b[1].content.length);   // the biggest last
+    if (!cuttable.length) return clipped;
+    const [i, m] = cuttable[cuttable.length - 1];
+    const next = {...m, content: headTail(m.content, Math.max(0, m.content.length - cut))};
+    if (next.content.length >= m.content.length) return clipped;    // no progress: stop
+    kept[i] = next;
+    clipped += m.content.length - next.content.length;
+  }
+  return clipped;
+}
+
+function pruneToContext(payload, cap, offering) {
+  if (!cap || cap <= 0) return {messages: payload, cap: 0, dropped: 0, droppedChars: 0, clipped: 0, tokens: 0, summary: "", fits: true};
   const head = [];                                   // leading system turns are the profile: they stay
   let i = 0;
   while (i < payload.length && payload[i].role === "system") head.push(payload[i++]);
   const body = payload.slice(i);
-  const target = Math.floor(cap * LOW_WATER);
+  // Trim to the low-water mark for hysteresis, but never below the room the newest turn needs:
+  // when the tool block alone is past the low-water line, clipping to it would empty the turn.
+  const target = Math.max(Math.floor(cap * LOW_WATER), Math.min(cap, templatePrefix(offering) + MIN_TURN_TOKENS));
   let dropped = 0, droppedChars = 0, summary = "";
   // Crossing the cap is the only trigger; once it fires, go down to the low-water mark so the
   // window stays byte-identical for the turns that follow. Under the cap the payload is not
   // reordered, or the engine would re-prefill a prompt that had not changed.
-  if (estimateTokens(head.concat(body)) <= cap) {
+  if (estimateTokens(head.concat(body), offering) <= cap) {
     const kept = head.concat(body);
-    return {messages: kept, cap, target, dropped: 0, droppedChars: 0, tokens: estimateTokens(kept), summary: ""};
+    return {messages: kept, cap, target, dropped: 0, droppedChars: 0, clipped: 0,
+            tokens: estimateTokens(kept, offering), summary: "", fits: true};
   }
   // A handoff already in the payload is the memory of turns dropped earlier. Pull it out
   // so the trim cannot drop it while it is dropping the turns around it.
   const handoffs = [];
   for (let j = body.length - 1; j >= 0; j--) if (isHandoff(body[j])) handoffs.unshift(body.splice(j, 1)[0]);
-  const estimate = () => estimateTokens(head.concat(handoffs, body));
+  const estimate = () => estimateTokens(head.concat(handoffs, body), offering);
   const droppedMsgs = [];
   while (body.length > 1 && estimate() > target) {
     const end = turnEnd(body);
@@ -1200,14 +1256,71 @@ function pruneToContext(payload, cap) {
     summary = summarizeDropped(droppedMsgs);
     handoffs.unshift({role: "user", content: summary});
   }
-  let kept = head.concat(handoffs, body);
-  // One message can still be larger than the window. Keep its beginning and its end.
-  if (estimateTokens(kept) > cap) {
-    const allowance = Math.max(2000, (cap - PREFIX_TOKENS) * CHARS_PER_TOKEN);
-    kept = kept.map((m) => (m.role !== "system" && typeof m.content === "string" && m.content.length > allowance
-      ? {...m, content: headTail(m.content, allowance)} : m));
-  }
-  return {messages: kept, cap, target, dropped, droppedChars, tokens: estimateTokens(kept), summary};
+  const kept = head.concat(handoffs, body);
+  // Whole turns are gone; what is left can still be one turn bigger than the window. Clip it to
+  // the low-water mark, not to the cap: the estimate is a character count, and the engine's BPE
+  // is not exactly four characters a token.
+  const clipped = clipToFit(kept, target, offering);
+  return {messages: kept, cap, target, dropped, droppedChars, clipped,
+          tokens: estimateTokens(kept, offering), summary, fits: estimateTokens(kept, offering) <= cap};
+}
+
+// The turn the page can actually send. The tool block is the largest thing in the prompt and it
+// grows with every MCP server added, so a chat that cannot fit with it is sent without it rather
+// than answered 400 by the engine: the question still gets an answer, just no tool calls.
+function buildRequest(payload, cap) {
+  const offering = settings.mcp !== false && mcpInfo.tools > 0;
+  const withTools = pruneToContext(payload, cap, offering);
+  if (withTools.fits || !offering) return {...withTools, offerTools: offering};
+  const without = pruneToContext(payload, cap, false);
+  return without.fits ? {...without, offerTools: false} : withTools;
+}
+
+// The engine measured the prompt with the real tokenizer and said so in the 400: "prompt (355050
+// tokens) leaves no room to answer in the context (132000)". That is an exact characters-per-token
+// ratio for the content this page is sending - prose, code, or a table - which the character count
+// above can only guess at. Returning it lets the turn be re-cut with the measurement and tried once.
+// Whether a turn the page cannot clip into the window is still worth sending. A plain engine
+// answers 400 and never truncates, so the page must not send it. A server started with
+// --trim-context fits the prompt itself (serve/server.py:2439 drops the oldest turns before
+// tokenising), so the turn can go whole and the tokenizer decides. ctxInfo is the "context"
+// block GET /mcp reports: {max_context, trim_context, fit_max_tokens}. An older server reports
+// no such block, which is the safe case: refuse.
+function serverCanFit(kept, ctxInfo) {
+  if (!ctxInfo || !ctxInfo.trim_context) return false;
+  const max = Number(ctxInfo.max_context) || 0;
+  return max > 0 && Number.isFinite(kept.tokens) && kept.tokens <= max;
+}
+
+function overflowRatio(message, payload) {
+  const m = /prompt \((\d+) tokens\)[\s\S]*?context \((\d+)\)/i.exec(String(message || ""));
+  if (!m) return null;
+  const chars = payloadChars(payload);
+  if (chars < 16) return null;
+  return {tokens: +m[1], chars, ctx: +m[2]};
+}
+
+// The first request of a chat has no anchor, so its size comes from the character guess. Measured
+// against this engine on a real attachment, that guess is off by about a fifth: markdown, tables and
+// code fence at 3.14-3.29 characters a token, not the 4 assumed here. The server can count a prompt
+// exactly without running the model - POST /v1/messages/count_tokens renders and tokenizes it
+// (serve/server.py:4568, ~45 ms). That count carries no tool block, so the tool definitions are
+// added from the prefix /mcp measured with the real tokenizer.
+function anchorFromCount(count, payload, offering) {
+  const chars = payloadChars(payload);
+  if (!Number.isFinite(count) || count <= 0 || chars < 16) return false;
+  const block = offering && mcpInfo.tools > 0 && prefix ? prefix.tokens - prefix.base : 0;
+  const total = count + block;
+  const ratio = (total - templatePrefix(offering)) / chars;
+  anchor = {tokens: total, chars, ratio: Math.min(1, Math.max(0.05, ratio)), offerTools: offering};
+  return true;
+}
+
+// Worth measuring only when the turn is close to the window; a small turn cannot overflow it, and
+// the count costs a round trip.
+function nearCap(payload, cap, offering) {
+  if (!cap || cap <= 0) return false;
+  return estimateTokens(payload, offering) >= cap * 0.9;
 }
 
 function apiMessages() {
@@ -1329,38 +1442,96 @@ async function send() {
   const payload = apiMessages();
   if (agent && agent.prompt) payload.unshift({role: "system", content: agent.prompt});
   if (promptCatalog.system) payload.unshift({role: "system", content: promptCatalog.system});
-  const kept = pruneToContext(payload, settings.ctx);
-  if (kept.summary) m.compaction = kept.summary;
-  if (kept.dropped) toast("info", "Context compacted",
-    `cap ${ctxfmt(kept.cap)} tokens: the ${kept.dropped} earliest turn(s) were summarized (${fmt(kept.droppedChars)} characters). The profile and the newest turns are sent in full.`, 6000);
-  const body = {model: health.model, messages: kept.messages, stream: true,
-                reasoning_effort: settings.thinking};
-  if (settings.temperature > 0) {
-    Object.assign(body, {temperature: +settings.temperature, top_p: +settings.top_p, top_k: +settings.top_k});
-  } else {
-    body.temperature = 0;
+  // The tool block is the largest thing in the prompt and it grows with every MCP server added.
+  // buildRequest offers the tools only when this turn can carry them, and clips the payload to the
+  // window. A turn that cannot fit at all is reported, not sent: the engine refuses it with 400
+  // and never truncates, so sending it would leave an empty bubble in the chat. A server started
+  // with --trim-context is the exception: it fits the prompt itself, so the turn can go whole.
+  // A turn near the window is measured with the engine's own tokenizer before anything is cut.
+  // Only the first request of a chat needs this: after any response the anchor is already exact.
+  const offering = settings.mcp !== false && mcpInfo.tools > 0;
+  if (!anchor.tokens && nearCap(payload, settings.ctx, offering)) {
+    try {
+      const r = await fetch("v1/messages/count_tokens", {method: "POST", headers: headers(true),
+        body: JSON.stringify({model: health.model, messages: payload})});
+      if (r.ok) anchorFromCount((await r.json()).input_tokens, payload, offering);
+    } catch (e) { /* no count endpoint on this server: the character estimate stands */ }
   }
-  if (settings.seed) body.seed = +settings.seed;
-  if (settings.max) body.max_tokens = +settings.max;
-  if (projectionLoaded()) body.experimental_speed_projection = !!settings.esp;
-  if (settings.mcp !== false && mcpInfo.tools > 0) body.hypercore_mcp = true;   // this server may run MCP tools for it
+  let kept = buildRequest(payload, settings.ctx);
+  if (!kept.fits) {
+    if (serverCanFit(kept, mcpContext)) {
+      toast("warn", "Sent over the cap",
+        `This turn is ${fmt(kept.tokens - settings.ctx)} tokens over the ${ctxfmt(settings.ctx)} cap. ` +
+        `This server trims the oldest turns to fit its ${ctxfmt(mcpContext.max_context)} context.`, 8000);
+    } else {
+      m.error = `Nothing fits the ${ctxfmt(settings.ctx)} token context: the profile and the tool definitions take ${fmt(kept.tokens)} tokens on their own. Turn the tools off under About > Settings, or raise the context in mcp.yaml.`;
+      toast("error", "Nothing fits the context", m.error, 8000);
+      busy = null;
+      endTurn();
+      updateAssistant(el, m, false);
+      saveChat();
+      return;
+    }
+  }
+  if (!kept.offerTools && settings.mcp !== false && mcpInfo.tools > 0) {
+    toast("warn", "Tools off for this turn",
+      `The ${mcpInfo.tools} tool definitions do not fit in the ${ctxfmt(settings.ctx)} context next to this conversation. The chat runs without them.`, 8000);
+  }
+  if (kept.summary) m.compaction = kept.summary;
+  if (kept.dropped || kept.clipped) toast("info", "Context compacted",
+    `cap ${ctxfmt(kept.cap)} tokens: the ${kept.dropped} earliest turn(s) were summarized (${fmt(kept.droppedChars)} characters)` +
+    (kept.clipped ? `; ${fmt(kept.clipped)} characters of the newest turn were kept as its beginning and its end.` : " The profile and the newest turns are sent in full."), 6000);
+  const chatBody = (kept) => {
+    const body = {model: health.model, messages: kept.messages, stream: true,
+                  reasoning_effort: settings.thinking};
+    if (settings.temperature > 0) {
+      Object.assign(body, {temperature: +settings.temperature, top_p: +settings.top_p, top_k: +settings.top_k});
+    } else {
+      body.temperature = 0;
+    }
+    if (settings.seed) body.seed = +settings.seed;
+    if (settings.max) body.max_tokens = +settings.max;
+    if (projectionLoaded()) body.experimental_speed_projection = !!settings.esp;
+    if (kept.offerTools) body.hypercore_mcp = true;   // this server may run MCP tools for it
+    return body;
+  };
 
   let firstAt = null, thinkStart = null, usage = null, frame = 0;
+  let sent = kept;                                   // the payload that actually went out
   const paint = () => { frame = 0; updateAssistant(el, m, true); scrollDown(); };
   try {
-    const r = await fetch("v1/chat/completions", {method: "POST", headers: headers(true), body: JSON.stringify(body),
-                                                   signal: controller.signal});
+    const post = (kept) => fetch("v1/chat/completions", {method: "POST", headers: headers(true),
+                                                        body: JSON.stringify(chatBody(kept)),
+                                                        signal: controller.signal});
+    let r = await post(kept);
     if (!r.ok) {
       let msg = `HTTP ${r.status}`;
       try { msg = (await r.json()).error.message || msg; } catch (e) { /* not json */ }
-      if (r.status === 401) msg = "This server needs an API key: add it under About > Settings.";
-      // a prompt that fills the context is refused, never cut (the engine does not truncate). Say what
-      // happened and what to do about it, rather than leaving the raw 400 in the chat.
-      if (r.status === 400 && /leaves no room/i.test(msg)) {
-        msg = `${msg} - this conversation has used up the context. Start a new chat, or keep the rounds
-               smaller in mcp.yaml (max_result_chars, condense_at, condense_chars).`;
+      // The page's own count is a character estimate. When the engine says the prompt is over the
+      // window it has measured it with the real tokenizer, so re-cut the payload with that number
+      // and try once. A document that is denser than prose is caught here rather than lost.
+      const measured = r.status === 400 ? overflowRatio(msg, kept.messages) : null;
+      if (measured) {
+        anchor = {tokens: measured.tokens, chars: measured.chars,
+                  ratio: Math.min(1, Math.max(0.2, (measured.tokens - templatePrefix(kept.offerTools)) / measured.chars))};
+        const again = buildRequest(payload, measured.ctx || settings.ctx);
+        if (again.fits) {
+          kept = again;
+          sent = kept;
+          if (again.summary) m.compaction = again.summary;
+          r = await post(kept);
+        }
       }
-      throw new Error(msg);
+      if (!r.ok) {
+        if (r.status === 401) msg = "This server needs an API key: add it under About > Settings.";
+        // a prompt that fills the context is refused, never cut (the engine does not truncate). Say what
+        // happened and what to do about it, rather than leaving the raw 400 in the chat.
+        if (r.status === 400 && /leaves no room/i.test(msg)) {
+          msg = `${msg} - this conversation has used up the context. Start a new chat, or keep the rounds
+                 smaller in mcp.yaml (max_result_chars, condense_at, condense_chars).`;
+        }
+        throw new Error(msg);
+      }
     }
     const reader = r.body.getReader(), dec = new TextDecoder();
     let buf = "";
@@ -1407,11 +1578,21 @@ async function send() {
   if (thinkStart && m.thinkSecs == null) m.thinkSecs = (performance.now() - thinkStart) / 1000;
   const n = usage ? usage.completion_tokens : null;
   if (usage && usage.prompt_tokens) {
-    // After a mid-turn compaction the last prompt is the handoff, not the payload
-    // this page sent. Anchor on that size so the next estimate does not treat the
-    // dropped turns as still in the window.
-    const chars = compactedDuringTurn ? usage.prompt_tokens * CHARS_PER_TOKEN : payloadChars(body.messages);
-    anchor = {tokens: usage.prompt_tokens, chars};
+    // After a mid-turn compaction the last prompt is the handoff, not the payload this page sent,
+    // so its character count is unknown: keep the ratio already measured and back the size out of
+    // it, so the next estimate does not treat the dropped turns as still in the window.
+    if (compactedDuringTurn) {
+      const ratio = anchor.ratio || 1 / CHARS_PER_TOKEN;
+      anchor = {tokens: usage.prompt_tokens, chars: Math.round(usage.prompt_tokens / ratio), ratio,
+               offerTools: anchor.offerTools};
+    } else {
+      const chars = payloadChars(sent.messages);
+      // The engine counted this content; the template's own block is not part of it. Clamped so a
+      // one-line turn cannot make the ratio absurd.
+      const ratio = chars > 16 ? Math.min(1, Math.max(0.2,
+        (usage.prompt_tokens - templatePrefix(sent.offerTools)) / chars)) : 1 / CHARS_PER_TOKEN;
+      anchor = {tokens: usage.prompt_tokens, chars, ratio, offerTools: sent.offerTools};
+    }
   }
   if (n && firstAt) {
     const secs = (performance.now() - firstAt) / 1000;
@@ -1475,7 +1656,7 @@ $("export-btn").onclick = () => {
 
 // pictures and text files: the attach button, dropping them on the chat, or pasting a picture (issue #30)
 const TEXT_EXT = /\.(txt|md|markdown|rst|tex|py|pyi|ipynb|js|mjs|cjs|ts|tsx|jsx|vue|svelte|json|jsonl|csv|tsv|log|ya?ml|toml|ini|cfg|conf|env|xml|html?|css|scss|less|c|cc|cpp|cxx|h|hh|hpp|cu|cuh|rs|go|java|kt|kts|swift|rb|php|pl|lua|r|jl|scala|sql|sh|bash|zsh|fish|ps1|psm1|bat|cmd|diff|patch|gradle|cmake|mk|dockerfile|gitignore|proto|graphql)$/i;
-const MAX_TEXT_FILE = 512 * 1024;
+const MAX_TEXT_FILE = 2 * 1024 * 1024;   // a guard against reading a whole drive into the page; the context trimmer is what decides how much of it reaches the model
 function isTextFile(f) {
   return f.type.startsWith("text/") || /json|xml|javascript|yaml|toml|x-sh|x-python/.test(f.type) ||
          TEXT_EXT.test(f.name) || /(^|[\\/])(makefile|dockerfile|readme|license)$/i.test(f.name);
@@ -1491,7 +1672,7 @@ function addFiles(files) {
       continue;
     }
     if (!isTextFile(f)) { toast("warn", "Not a text file", `${f.name}: attach text files (code, notes, logs, data)${health.images ? " or pictures" : ""}.`); continue; }
-    if (f.size > MAX_TEXT_FILE) { toast("warn", "File too large", `${f.name} is over 512 KB.`); continue; }
+    if (f.size > MAX_TEXT_FILE) { toast("warn", "File too large", `${f.name} is over 2 MB.`); continue; }
     const r = new FileReader();
     r.onload = () => {
       const text = String(r.result);
@@ -1504,7 +1685,11 @@ function addFiles(files) {
 }
 // a file's text in the message, fenced with more backticks than it contains itself
 function fileBlock(f) {
-  const longest = Math.max(2, ...(f.text.match(/`+/g) || []).map((s) => s.length));
+  // The fence must be longer than the longest run of backticks the file itself contains.
+  // Spreading the matches into Math.max exhausts the stack on a document with a hundred
+  // thousand of them, which is what happens when a big log or a JSON dump is attached.
+  let longest = 2;
+  for (const run of f.text.match(/`+/g) || []) if (run.length > longest) longest = run.length;
   const fence = "`".repeat(longest + 1);
   return `File: ${f.name}\n${fence}\n${f.text}\n${fence}`;
 }

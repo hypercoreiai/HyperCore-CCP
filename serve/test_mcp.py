@@ -229,6 +229,66 @@ class Config(unittest.TestCase):
                 hub_from_config(cfg)
         with self.assertRaises(SystemExit):
             hub_from_config({}, os.path.join(tempfile.gettempdir(), "hypercore-no-such-mcp.json"))
+        with self.assertRaises(SystemExit):
+            hub_from_config({"mcp_servers": {"a": stdio()}, "mcp": {"tool_allowlist": "echo"}})
+
+
+# ------------------------------------------------------------------------------------------------ the tool block's size
+class ToolAllowList(unittest.TestCase):
+    """`tool_allowlist` in mcp.yaml or the run config narrows the tools the model is offered. The tool block
+    is fixed prompt overhead the page cannot trim, so the hub has to decide its size at startup."""
+
+    def hub(self, allowlist):
+        hub = McpHub({"fake": stdio()}, {"timeout_s": 10, "tool_allowlist": allowlist})
+        hub.start(wait=True)
+        return hub
+
+    def test_no_allowlist_offers_every_tool(self):
+        hub = self.hub(None)
+        names = sorted(t["name"] for t in hub.template_tools())
+        self.assertEqual(names, sorted(hub.surface()))
+        self.assertEqual(hub.status()["tools"], len(names))
+        self.assertEqual(hub.status()["hidden"], [])
+        self.assertIsNone(hub.status()["tool_allowlist"])
+
+    def test_an_allowlist_keeps_only_the_named_tools(self):
+        hub = self.hub(["echo", "add"])
+        # The model sees surface names (server__tool); a bare name in mcp.yaml is only how a
+        # person writes it, so the list resolves to the surface names the server reports.
+        kept = ["fake__add", "fake__echo"]
+        self.assertEqual(sorted(t["name"] for t in hub.template_tools()), kept)
+        body = hub.status()
+        self.assertEqual(body["tools"], 2)
+        self.assertEqual(body["offered"], kept)
+        self.assertEqual(sorted(body["hidden"]), sorted(set(hub.surface()) - set(kept)))
+        self.assertEqual(body["tool_allowlist"], kept)
+        # the server still answers a direct call: the list narrows what the model is offered, not what exists
+        self.assertIn("hi", hub.call("fake__echo", {"text": "hi"})["text"])
+
+    def test_a_server_name_stands_for_its_tools(self):
+        hub = McpHub({"fake": stdio(), "other": stdio("--page", "4")}, {"timeout_s": 10,
+                        "tool_allowlist": ["fake"]})
+        hub.start(wait=True)
+        offered = {t["name"] for t in hub.template_tools()}
+        self.assertTrue(offered)
+        self.assertTrue(all(hub.surface()[n]["server"] == "fake" for n in offered))
+        self.assertTrue(hub.status()["hidden"])   # the other server's tools are not offered
+
+    def test_an_unknown_name_offers_nothing(self):
+        hub = self.hub(["not-a-tool"])
+        self.assertEqual(hub.template_tools(), [])
+        self.assertEqual(hub.status()["tools"], 0)
+
+    def test_the_prefix_the_page_is_given_counts_only_the_offered_tools(self):
+        tok = ByteTokenizer()
+        hub = self.hub(["echo"])
+        svc = Service(ScriptedEngine(tok, ["</think>\n\nok"]), tok, ChatTemplate(ROOT / "serve/chat_template.jinja"))
+        svc.mcp = hub   # server.py assigns the hub the same way (serve/server.py:5322)
+        full = svc.tool_prefix(svc.mcp.template_tools())
+        none = svc.tool_prefix(None)
+        self.assertGreater(full["tokens"], none["base"])
+        self.assertLess(full["tokens"], svc.tool_prefix(
+            [{"name": "a" * 40, "description": "x" * 200, "parameters": {"type": "object"}}] * 20)["tokens"])
 
 
 # ------------------------------------------------------------------------------------------------ the tool loop
@@ -453,10 +513,34 @@ class ToolLoop(unittest.TestCase):
         self.assertIn("missing configuration", servers["broken"]["error"])
         self.assertEqual(st["tools"], len(fake.TOOLS))
         self.assertEqual(st["settings"]["max_rounds"], 2)
+        # the tool block the page cannot count for itself, measured with the real template
+        want = len(self.svc.encode_prompt([{"role": "user", "content": ""}], self.svc.mcp.template_tools(), {}))
+        self.assertEqual(st["prefix"], {"tokens": want, "base": len(
+            self.svc.encode_prompt([{"role": "user", "content": ""}], None, {})), "tools": len(fake.TOOLS)})
         self.svc.api_key = "k"
         with self.assertRaises(urllib.error.HTTPError):
             urllib.request.urlopen(self.base + "/mcp", timeout=10)
         self.svc.api_key = ""
+
+    def test_the_prefix_grows_with_the_tool_surface(self):
+        """The number the page reserves is the tool block, so it moves when a server is added.
+        Hardcoding it is what lets a chat with more servers overflow on its first turn."""
+        self.start("</think>\n\nhi")
+        svc = self.svc
+        one = [{"name": "a", "description": "one tool", "parameters": {"type": "object", "properties": {}}}]
+        two = one + [{"name": "b", "description": "a second tool",
+                      "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}}]
+        p1, p2 = svc.tool_prefix(one), svc.tool_prefix(two)
+        self.assertGreater(p2["tokens"], p1["tokens"])
+        self.assertEqual(p2["tools"], 2)
+        self.assertIs(svc.tool_prefix(two), p2)                       # cached by the surface, not re-rendered
+        self.assertLess(svc.tool_prefix(None)["base"], p1["tokens"])  # a chat with no tools pays no tool block
+        # and the real prompt is never smaller than the part the page could not count
+        self.post({"hypercore_mcp": True, "stream": False})
+        real = len(self.engine.prompts[-1])
+        self.assertGreaterEqual(real, svc.tool_prefix(svc.mcp.template_tools())["tokens"])
+        self.assertGreater(real, svc.tool_prefix(None)["base"])   # the message itself is not in the prefix
+
 
 
 class NoServers(unittest.TestCase):
@@ -467,7 +551,15 @@ class NoServers(unittest.TestCase):
         try:
             base = f"http://127.0.0.1:{httpd.server_address[1]}"
             with urllib.request.urlopen(base + "/mcp", timeout=10) as r:
-                self.assertEqual(json.loads(r.read()), {"servers": [], "tools": 0})
+                body = json.loads(r.read())
+            self.assertEqual({k: v for k, v in body.items() if k not in ("prefix", "context")},
+                             {"servers": [], "tools": 0})
+            # #565: the page needs to know whether this server fits an over-cap prompt itself
+            self.assertEqual(body["context"], {"max_context": CTX, "trim_context": False,
+                                             "fit_max_tokens": False})
+            want = len(svc.encode_prompt([{"role": "user", "content": ""}], None, {}))
+            self.assertEqual(body["prefix"], {"tokens": want, "base": want, "tools": 0})
+            self.assertGreater(want, 0)   # the template's own system block, even with no servers
             req = urllib.request.Request(base + "/v1/chat/completions", data=json.dumps(
                 {"model": "m", "messages": [{"role": "user", "content": "x"}], "hypercore_mcp": True}).encode(),
                 headers={"Content-Type": "application/json"})

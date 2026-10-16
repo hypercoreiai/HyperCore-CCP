@@ -36,9 +36,10 @@ from pathlib import Path
 from serve.winjob import contain
 
 PROTOCOL = "2025-06-18"               # the MCP revision HyperCore asks for; the server's answer is used as given
-DEFAULTS = {"timeout_s": 60.0, "max_result_chars": 20000, "max_rounds": 8, "start_timeout_s": 120.0,
+DEFAULTS = {"timeout_s": 60.0, "max_result_chars": 20000, "max_rounds": 500, "start_timeout_s": 120.0,
           "condense_at": 0.0, "condense_after": 0, "condense_chars": 600,   # condense_at 0: never condense
-          "compact_at": 0.0, "compact_retain_bytes": 80_000}                # compact_at 0: never compact
+          "compact_at": 0.0, "compact_retain_bytes": 80_000,               # compact_at 0: never compact
+          "tool_allowlist": None}          # None: every tool is offered. A list narrows the tool block.
 
 
 class McpError(RuntimeError):
@@ -649,8 +650,8 @@ def deterministic_summary(messages: list) -> str:
             continue
         role = message.get("role")
         text = message_text(message).strip()
-        if role == "system" or not text and role != "assistant":
-            continue
+        if role in ("system", "developer") or not text and role != "assistant":
+            continue                        # a profile turn is a rule, not conversation to summarise
         if role == "user":
             if is_handoff(message):
                 lines.append("Earlier handoff: " + " ".join(text.split())[:400])
@@ -711,7 +712,8 @@ def shrink_messages(messages: list, cap: int) -> list | None:
 def plan_compaction(messages: list, summary: str, retain_bytes: int, keep_round: bool = True) -> dict | None:
     """Replace the older part of a transcript with one handoff.
 
-    The leading system messages stay. The newest user message stays, cut only
+    Every system/developer turn stays, hoisted to the top: the chat template merges them into
+    one system block, so a profile added mid-transcript is a rule, not history. The newest user message stays, cut only
     when it alone exceeds retain_bytes. With keep_round, the trailing tool
     round stays too, because that is the result the model is about to answer.
     Everything else is represented by `summary`. None when that would not
@@ -722,8 +724,8 @@ def plan_compaction(messages: list, summary: str, retain_bytes: int, keep_round:
     for message in messages:
         if not isinstance(message, dict):
             continue
-        if not rest and message.get("role") == "system":
-            systems.append(message)
+        if message.get("role") in ("system", "developer"):
+            systems.append(message)          # never a candidate for the handoff
         else:
             rest.append(message)
     last_user = None
@@ -985,11 +987,43 @@ class McpHub:
                         "server": None, "tool": name, "merged": sorted(_folded(m))}
         return out
 
+    def allowed_names(self) -> set[str] | None:
+        """The hub-level tool_allowlist as surface names, or None when every tool is offered.
+
+        An entry is a tool name as the model sees it ("web__search", or the name a merge folds a
+        server's tools into), the bare tool a server reports ("search"), or a server name, which
+        stands for all of that server's tools. Names that match nothing are ignored: a tool that is
+        not installed today should not stop the chat from starting.
+        """
+        raw = self.settings.get("tool_allowlist")
+        if not raw:
+            return None
+        surface = self.surface()
+        servers = {s.name for s in self.servers.values()}
+        # A bare tool name is what a person writes in mcp.yaml. It is unambiguous only when one
+        # server reports it; two servers with the same tool name (both have a `status`) are both kept.
+        by_tool: dict[str, list[str]] = {}
+        for name, tool in surface.items():
+            by_tool.setdefault(_clean(str(tool.get("tool") or "")), []).append(name)
+        out: set[str] = set()
+        for name in raw:
+            key = _clean(str(name))
+            if key in surface:
+                out.add(key)
+            elif key in servers:
+                out.update(n for n, t in surface.items() if t.get("server") == key)
+            elif key in by_tool:
+                out.update(by_tool[key])
+        return out
+
     def template_tools(self, exclude=()) -> list[dict]:
         """The tools in the chat template's form ({name, description, parameters}); `exclude`: names the request
-        brought itself (those win)."""
+        brought itself (those win). A tool_allowlist narrows what is offered at all: the tool block is fixed
+        prompt overhead the page cannot trim, so it is the hub that decides its size."""
+        allowed = self.allowed_names()
         return [{k: t[k] for k in ("name", "description", "parameters")}
-                for name, t in self.surface().items() if name not in exclude]
+                for name, t in self.surface().items()
+                if name not in exclude and (allowed is None or name in allowed)]
 
     def openai_tools(self) -> list[dict]:
         return [{"type": "function", "function": t} for t in self.template_tools()]
@@ -1066,12 +1100,18 @@ class McpHub:
                 tools.append(entry)
             servers.append({"name": s.name, "transport": s.kind, "status": s.status, "enabled": s.enabled,
                             "error": s.error, "info": s.info, "tools": tools})
-        return {"servers": servers, "tools": len(surface), "merged": sorted(_clean(m["name"]) for m in active),
+        allowed = self.allowed_names()
+        offered = sorted(t["name"] for t in self.template_tools())
+        return {"servers": servers, "tools": len(offered),
+                "offered": offered,
+                "hidden": sorted(n for n in surface if n not in (allowed or set())) if allowed else [],
+                "merged": sorted(_clean(m["name"]) for m in active),
                 "collisions": sorted(self.collisions),
                 "usage": {**self.usage, "tokens_est": self.usage["chars"] // 4},
                 "settings": {k: self.settings[k] for k in ("timeout_s", "max_result_chars", "max_rounds",
                                          "condense_at", "condense_after", "condense_chars",
-                                         "compact_at", "compact_retain_bytes")}}
+                                         "compact_at", "compact_retain_bytes")},
+                "tool_allowlist": sorted(allowed) if allowed is not None else None}
 
     def close(self):
         for s in self.servers.values():
@@ -1160,6 +1200,12 @@ def settings_from(cfg: dict) -> dict:
                 raise SystemExit(f"[hypercore] config mcp.{key}={value!r}: expected a fraction of the context "
                                  "between 0 (never) and 1")
             out[key] = float(value)
+        elif key == "tool_allowlist":
+            if value is None:
+                continue                                   # explicit "all tools"
+            if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+                raise SystemExit(f"[hypercore] config mcp.{key}={value!r}: expected a list of tool names")
+            out[key] = [v.strip() for v in value]
         else:
             print(f"[hypercore] config mcp.{key}={value!r}: unknown key, ignored", flush=True)
     return out
@@ -1280,7 +1326,7 @@ def load_mcp_yaml(path: str) -> tuple[dict, dict]:
         raise SystemExit(f"[hypercore] {path}: the file must be a mapping")
     settings = {k: data[k] for k in ("timeout_s", "start_timeout_s", "max_result_chars", "max_rounds",
                         "condense_at", "condense_after", "condense_chars",
-                        "compact_at", "compact_retain_bytes") if k in data}
+                        "compact_at", "compact_retain_bytes", "tool_allowlist") if k in data}
     block = data.get("servers", data.get("mcp_servers", data.get("mcpServers")))
     servers = servers_from(block, path)
     base = Path(path).resolve().parent

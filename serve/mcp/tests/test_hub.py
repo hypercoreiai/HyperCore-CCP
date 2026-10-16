@@ -532,6 +532,43 @@ class Hub(unittest.TestCase):
         self.assertEqual(folded["omit_tool_ids"], ["c1", "c2"])
         self.assertIn("now fix the bug", json.dumps(folded["messages"]))
 
+    @case(SERVER, "compact", "a profile turn is preserved wherever it sits in the transcript")
+    def test_hub__plan_compaction_preserves_every_profile_turn(self):
+        profile = "Never use an em dash. Keep the _meta JSON intact."
+        old = "OLD " * 400
+        messages = [
+            {"role": "system", "content": "base rules"},
+            {"role": "user", "content": "build the index"},
+            {"role": "assistant", "content": "searching",
+             "tool_calls": [{"id": "c1", "function": {"name": "docs__read"}}]},
+            {"role": "tool", "content": old},
+            {"role": "developer", "content": profile},          # the agent profile, added mid-chat
+            {"role": "user", "content": "now fix the bug"},
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "c2", "function": {"name": "terminal__run"}}]},
+            {"role": "tool", "content": "NEW"},
+        ]
+        plan = plan_compaction(messages, "Goal: fix the bug", 80_000, keep_round=True)
+        self.assertIsNotNone(plan)
+        blob = json.dumps(plan["messages"])
+        self.assertIn("base rules", blob)
+        self.assertIn(profile, blob)                            # the profile survives verbatim
+        self.assertNotIn(profile, json.dumps(plan["prefix"]))  # and is never folded into the handoff
+        self.assertEqual([m["role"] for m in plan["messages"][:2]], ["system", "developer"])
+        self.assertNotIn(old, blob)
+
+    @case(SERVER, "compact", "the deterministic handoff never quotes a profile turn")
+    def test_hub__deterministic_summary_skips_profile_turns(self):
+        profile = "Never use an em dash."
+        body = deterministic_summary([
+            {"role": "system", "content": profile},
+            {"role": "developer", "content": profile},
+            {"role": "user", "content": "build the index"},
+            {"role": "assistant", "content": "The index is in place."},
+        ])
+        self.assertNotIn(profile, body)
+        self.assertIn("User: build the index", body)
+
     @case(SERVER, "compact", "a short transcript and a handoff-only prefix are left alone")
     def test_hub__plan_compaction_skips_when_nothing_would_drop(self):
         self.assertIsNone(plan_compaction([{"role": "user", "content": "hi"}], "summary", 80_000))

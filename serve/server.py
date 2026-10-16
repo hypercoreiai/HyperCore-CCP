@@ -1578,6 +1578,7 @@ class Service:
         # Off by default: "requests are never truncated" is the contract (module docstring, #545).
         self.trim_context = trim_context
         self.last_trim: dict | None = None           # what the last trimmed request lost, for the tests and the log
+        self._prefix_cache: dict[str, dict] = {}     # tool surface -> the tokens the template adds around a prompt
         self.aliases: list[str] = []                  # #297: other names of the model (the config's `aliases`)
         self.sampling_defaults = dict(sampling_defaults or {})   # the run config's `sampling` block
         self.shared = {}                              # the web app's Chat settings for every client (POST /settings)
@@ -2256,6 +2257,28 @@ class Service:
             return self.tok.encode(prompt, parse_special=True)
         prompt, plain = unmark_think_literals(prompt, self.literals)
         return self.tok.encode(prompt, parse_special=True, plain=plain)
+
+    def tool_prefix(self, tools: list | None) -> dict:
+        """What the template writes around the messages: the tool block, its instructions, the
+        generation prompt. None of it is in the payload, and the browser has no tokenizer, so the
+        page cannot count it; it anchors on prompt_tokens for every request after the first.
+
+        `tokens` is the answer for a request that offers the tools, `base` for one that does not.
+        Measured with an empty probe message, so the number carries that turn's own wrapper: a few
+        tokens over, never under. Cached by the tool surface, so adding a server changes it and a
+        steady chat does not.
+        """
+        tools = list(tools or [])
+        key = hashlib.sha256(json.dumps(tools, sort_keys=True).encode()).hexdigest()
+        hit = self._prefix_cache.get(key)
+        if hit is not None:
+            return hit
+        probe = [{"role": "user", "content": ""}]
+        out = {"tokens": len(self.encode_prompt(probe, tools or None, {})),
+               "base": len(self.encode_prompt(probe, None, {})),
+               "tools": len(tools)}
+        self._prefix_cache[key] = out
+        return out
 
     def _note_unreadable_tool_images(self, messages):
         """A picture a tool returned (Claude Code's Read of an image file) that this server cannot read - it has no
@@ -3707,9 +3730,19 @@ def make_handler(svc: Service):
                     self._config_get()
                 return
             if path == "/mcp":
-                # the MCP servers, their state and tools (the web app's switch and Monitor card)
+                # the MCP servers, their state and tools (the web app's switch and Monitor card), plus
+                # the size of the tool block the template adds: the page needs it before it has a
+                # prompt_tokens of its own to anchor on.
                 if self._authorized():
-                    self._json(200, svc.mcp.status() if svc.mcp else {"servers": [], "tools": 0})
+                    body = svc.mcp.status() if svc.mcp else {"servers": [], "tools": 0}
+                    body["prefix"] = svc.tool_prefix(svc.mcp.template_tools() if svc.mcp else None)
+                    # #565: what this server does with a prompt that is over the window. The page clips its
+                    # own payload because a plain engine answers 400; a server started with --trim-context
+                    # fits it here instead, so the page can send the turn whole and let the tokenizer decide.
+                    body["context"] = {"max_context": int(getattr(svc.engine, "max_context", 0) or 0),
+                                       "trim_context": bool(svc.trim_context),
+                                       "fit_max_tokens": bool(svc.fit_max_tokens)}
+                    self._json(200, body)
                 return
             if path == "/assist/models":
                 # the dropdown's list. serve/assist_fast_models.json pins it to the models that answered

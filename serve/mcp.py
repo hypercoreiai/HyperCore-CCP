@@ -34,7 +34,7 @@ import urllib.request
 from serve.winjob import contain
 
 PROTOCOL = "2025-06-18"               # the MCP revision HyperCore asks for; the server's answer is used as given
-DEFAULTS = {"timeout_s": 60.0, "max_result_chars": 20000, "max_rounds": 8, "start_timeout_s": 120.0}
+DEFAULTS = {"timeout_s": 60.0, "max_result_chars": 20000, "max_rounds": 500, "start_timeout_s": 120.0}
 
 
 class McpError(RuntimeError):
