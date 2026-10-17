@@ -382,7 +382,7 @@ if ! command -v node >/dev/null 2>&1; then
     exit 0
 fi
 suites=0; checks=0
-for t in test_stop_start_buttons test_surface_slider test_assist_thought_panel; do
+for t in test_stop_start_buttons test_surface_slider test_assist_thought_panel test_prefix_tokens test_large_document; do
     echo "--- serve/web/$t.js"
     out="$(node "serve/web/$t.js")" || { echo "$out"; exit 1; }
     echo "$out"

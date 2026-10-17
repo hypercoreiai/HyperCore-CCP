@@ -155,10 +155,14 @@ data/history/_old_topics/
 # writes max_run_<model>.sh/.json at the root and a CSV per run under optuna_tune/results/.
 /optuna_tune/
 max_run_*.sh
+/max_run_*.sh
 max_run_*.json
+/max_run_*.json
 /optuna_tune/results/
 max_run_*.pid
+/max_run_*.pid
 max_run_*.fifo
+/max_run_*.fifo
 # The Optuna sweep's own session state, same class as .mcp_test_state.json.
 /.optuna_tune_state.json
 
@@ -171,6 +175,13 @@ max_run_*.fifo
 /_max_run_*.json
 /[0-9]*_max_run_*.sh
 /[0-9]*_max_run_*.json
+# Same class, from the build/debug and prefill sweeps: generated per machine.
+/max_bld_*.sh
+/max_bld_*.json
+/max_dbg_*.sh
+/max_dbg_*.json
+/qwen_run_*.sh
+/qwen_config_*.json
 
 # The model directory is a symlink to the downloaded pack, outside the repo.
 /Q2_0
@@ -186,6 +197,10 @@ max_run_*.fifo
 /.calibrate_progress.log
 /.blackbox_scan_state.json
 /.verify_all_tests_state.json
+/.mcp_reproduction_state.json
+/.nexus_webui_context_state.json
+/.prefill_max_check_state.json
+/.cuda_gdb_attach_state.json
 
 # verify_all_tests.sh transcripts: every run writes a new one under bench/results/verify-<date>/
 # and compares it with the previous one, so they are working output, not source.

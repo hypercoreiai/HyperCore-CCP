@@ -23,7 +23,7 @@
 
 timeout_s: 90
 max_result_chars: 6000
-max_rounds: 100
+max_rounds: 500
 start_timeout_s: 30
 condense_at: 0.55
 condense_after: 2
