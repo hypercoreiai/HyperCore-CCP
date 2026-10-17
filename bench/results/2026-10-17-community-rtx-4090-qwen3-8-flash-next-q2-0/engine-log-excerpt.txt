@@ -1,0 +1,7 @@
+[hypercore] loading the experts the GPU does not hold into RAM (of about 38 GB) and locking part of them for the GPU.
+         Please wait and don't close this window; the browser opens when it is ready.
+[hypercore] filling the GPU's expert cache (12542 experts, 16.15 GiB of VRAM) ...
+[hypercore] almost ready ...
+[hypercore] expert configuration: 12542 of 12542 VRAM expert slots, 16.15 GiB held by resident in page-locked RAM (--resident-experts) (381 MiB of VRAM free when it was sized), pcie_frac 0.75
+ready: http://127.0.0.1:8081/v1  (OpenAI: /v1/chat/completions, Anthropic: /v1/messages, context 131072 tokens, API key required)
+[hypercore] MCP server 'scrape': 7 tools (extract_media, download_file, download_page_media, batch_download, file_info, list_downloads, remove_downloads)
